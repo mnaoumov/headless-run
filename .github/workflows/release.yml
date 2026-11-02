@@ -1,0 +1,64 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      max-parallel: 2
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-latest
+          - rid: win-arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      DOTNET_PROCESSOR_COUNT: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Verify tag and source version
+        shell: pwsh
+        run: |
+          [xml] $project = Get-Content src/headless-run/headless-run.csproj
+          if ($env:GITHUB_REF_NAME -ne "v$($project.Project.PropertyGroup.Version)") { throw 'Tag and project version differ' }
+      - name: Publish NativeAOT
+        shell: pwsh
+        run: dotnet publish src/headless-run -c Release -r ${{ matrix.rid }} -p:PublishAot=true -o artifacts/${{ matrix.rid }} -m:2
+      - name: Integration test native release
+        shell: pwsh
+        run: ./scripts/test.ps1 -Launcher ./artifacts/${{ matrix.rid }}/headless-run.exe
+      - name: Package executable and checksum
+        shell: pwsh
+        run: |
+          $name = 'headless-run-${{ matrix.rid }}.exe'
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          Copy-Item artifacts/${{ matrix.rid }}/headless-run.exe release/$name
+          $hash = (Get-FileHash release/$name -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$PWD/release/$name.sha256", "$hash  $name`n")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: release/*
+          if-no-files-found: error
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --generate-notes
