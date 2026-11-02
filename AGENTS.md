@@ -2,6 +2,14 @@
 
 `headless-run` is a Windows-subsystem launcher built with C# and .NET 10. It forwards the raw child command line through documented Win32 APIs. Keep the child tail opaque: only launcher options before `--` may be parsed.
 
+## L1. C# coding standards
+
+Use Allman braces on separate lines and expand every control-flow body, including single-statement bodies. Do not keep multiple statements or compact type/method bodies on one line. Apply the same standards to integration fixtures. The root `.editorconfig` defines formatting and requires braces; builds enforce the brace diagnostic.
+
+Replace unexplained numbers with descriptive constants, including Win32 flags, information classes, standard-handle identifiers, wait results, unit conversions and test timing limits. Keep trivially obvious zero/one values, array indices and explicit test data literal. Spell `Milliseconds` in full in identifiers. Use the `_IN_` form for unit-conversion constants.
+
+Run `dotnet format style <project> --diagnostics IDE0011 --verify-no-changes` and `dotnet format whitespace <project> --verify-no-changes` for both C# projects. Keep `DOTNET_PROCESSOR_COUNT=2` while running formatting, builds and integration tests. Formatting checks do not replace the manual constant audit or integration verification.
+
 ## Build and verify
 
 Run `pwsh -NoProfile -File scripts/test.ps1` on Windows. The dependency-free integration executable doubles as the real child-process fixture. Tests run serially; build parallelism is capped at two.
