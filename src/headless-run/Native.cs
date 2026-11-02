@@ -75,7 +75,8 @@ internal static class Native
     {
         public nint Process;
         public nint Thread;
-        public uint ProcessId, ThreadId;
+        public uint ProcessId;
+        public uint ThreadId;
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct BasicLimits
