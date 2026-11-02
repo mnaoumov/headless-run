@@ -7,6 +7,7 @@ $env:DOTNET_PROCESSOR_COUNT = '2'
 $repo = Split-Path $PSScriptRoot -Parent
 Push-Location $repo
 try {
+    & (Join-Path $PSScriptRoot 'check-csharp-style.ps1')
     if (-not $Launcher) {
         dotnet build src/headless-run -c Release --nologo -m:2
         if ($LASTEXITCODE -ne 0) {

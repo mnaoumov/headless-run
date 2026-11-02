@@ -6,6 +6,8 @@
 
 Use Allman braces on separate lines and expand every control-flow body, including single-statement bodies. Do not keep multiple statements or compact type/method bodies on one line. Apply the same standards to integration fixtures. The root `.editorconfig` defines formatting and requires braces; builds enforce the brace diagnostic.
 
+Declare one variable per declaration and put each declaration on its own line, including fields, constants and locals that share a type. `scripts/check-csharp-style.ps1` checks the C# syntax tree for combined declarations, compact/non-Allman blocks and declarations/statements sharing a line. It uses Roslyn bundled with PowerShell 7 and runs before every integration verification; comments and string literals are not scanned as code.
+
 Replace unexplained numbers with descriptive constants, including Win32 flags, information classes, standard-handle identifiers, wait results, unit conversions and test timing limits. Keep trivially obvious zero/one values, array indices and explicit test data literal. Spell `Milliseconds` in full in identifiers. Use the `_IN_` form for unit-conversion constants.
 
 Run `dotnet format style <project> --diagnostics IDE0011 --verify-no-changes` and `dotnet format whitespace <project> --verify-no-changes` for both C# projects. Keep `DOTNET_PROCESSOR_COUNT=2` while running formatting, builds and integration tests. Formatting checks do not replace the manual constant audit or integration verification.
