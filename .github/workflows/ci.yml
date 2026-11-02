@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: windows-latest
+    env:
+      DOTNET_PROCESSOR_COUNT: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build and integration test
+        shell: pwsh
+        run: ./scripts/test.ps1
+      - name: Publish NativeAOT
+        shell: pwsh
+        run: dotnet publish src/headless-run -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64 -m:2
+      - name: Test native executable
+        shell: pwsh
+        run: ./scripts/test.ps1 -Launcher ./artifacts/win-x64/headless-run.exe
