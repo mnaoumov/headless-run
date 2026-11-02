@@ -269,7 +269,10 @@ internal static class Program
                         child.Kill(true);
                     }
                 }
-                catch (ArgumentException) { }
+                catch (ArgumentException)
+                {
+                    // The process exited before the cleanup lookup could find it.
+                }
             }
         }
     }
