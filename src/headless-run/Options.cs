@@ -9,7 +9,7 @@ internal sealed class Options
     private const int SECONDS_IN_MINUTE = 60;
     private const int MINUTES_IN_HOUR = 60;
     private const int BackslashesInEscapedPair = 2;
-    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority"];
+    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority", "--elevated-relay"];
     private static readonly Dictionary<string, uint> PriorityClasses = new(StringComparer.Ordinal)
     {
         ["idle"] = Native.IdlePriorityClass,
@@ -26,6 +26,9 @@ internal sealed class Options
     public bool Detach;
     public bool CreateDirectory;
     public bool WindowsPowerShell;
+    public bool Elevate;
+    public string? ElevatedRelay;
+    public string Arguments = "";
     public uint PriorityClass;
     public bool Help;
     public bool Version;
@@ -38,6 +41,8 @@ internal sealed class Options
         var position = 0;
         string? inlineValue = null;
         ReadToken(commandLine, ref position); // launcher executable, never forwarded
+        SkipSpace(commandLine, ref position);
+        Arguments = commandLine[position..]; // forwarded verbatim to an elevated copy
         while (position < commandLine.Length)
         {
             SkipSpace(commandLine, ref position);
@@ -86,6 +91,12 @@ internal sealed class Options
                     break;
                 case "--create-cwd":
                     CreateDirectory = true;
+                    break;
+                case "--elevate":
+                    Elevate = true;
+                    break;
+                case "--elevated-relay":
+                    ElevatedRelay = ReadValue(flag);
                     break;
                 case "--windows-powershell":
                     WindowsPowerShell = true;

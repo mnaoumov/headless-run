@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection.PortableExecutable;
@@ -16,6 +17,7 @@ internal static class Program
     private const int LaunchFailureExitCode = 125;
     private const int JobObjectBasicLimitInformation = 2;
     private const uint JobObjectLimitPriorityClass = 0x20;
+    private const string RelayWithoutUacVariable = "HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC";
     [DllImport("kernel32.dll")]
     private static extern nint GetConsoleWindow();
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -221,7 +223,7 @@ internal static class Program
             });
             Test("launch and usage failures produce diagnostics", () =>
             {
-                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0" })
+                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0" })
                 {
                     var run = Run(launcher, command);
                     Assert(run.Code == LaunchFailureExitCode && run.Error.Contains("headless-run:"), "missing failure: " + command);
@@ -254,6 +256,61 @@ internal static class Program
                 Assert(run.Code == 0, run.Error);
                 WaitFor(() => File.Exists(marker), "detached child did not finish");
                 Assert(File.ReadAllText(marker) == "done", "detached child killed");
+            });
+            Test("--elevate relays stdin, stdout, stderr and the exit code", () =>
+            {
+                foreach (var code in new[] { "0", "7", "-1073741819" })
+                {
+                    var run = Run(launcher, "--elevate -- " + Quote(Self) + " child echo " + code, relay: true, input: "line one\nline two\n");
+                    Assert(run.Code == int.Parse(code, CultureInfo.InvariantCulture), "relayed exit code " + run.Code + ": " + run.Error);
+                    Assert(run.Output == "line one\nline two\n" && run.Error == "stderr\n", "relayed streams: " + run.Output + "|" + run.Error);
+                }
+                // Without stdin the child still sees EOF rather than waiting.
+                var empty = Run(launcher, "--elevate -- " + Quote(Self) + " child echo 3", relay: true);
+                Assert(empty.Code == 3 && empty.Output.Length == 0, "relayed empty stdin: " + empty.Error);
+            });
+            Test("--elevate relays the caller's environment and working directory", () =>
+            {
+                var directory = Path.Combine(root, "elevated cwd");
+                Directory.CreateDirectory(directory);
+                var output = Path.Combine(directory, "relative-stdout.txt");
+                // Relative paths resolve against the caller's directory, as they do without --elevate.
+                var run = Run(launcher, "--elevate --env HEADLESS_TEST=relayed --stdout relative-stdout.txt -- " + Quote(Self) + " child state state.json", relay: true, directory: directory);
+                Assert(run.Code == 0, run.Error);
+                Assert(File.Exists(output), "relative --stdout resolved elsewhere");
+                using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "state.json")));
+                Assert(state.RootElement.GetProperty("cwd").GetString() == directory, "relayed cwd");
+                Assert(state.RootElement.GetProperty("env").GetString() == "relayed", "--env applied in the copy");
+                Assert(state.RootElement.GetProperty("console").GetInt64() == 0, "console window created");
+            });
+            Test("--elevate timeout and diagnostics come back through the relay", () =>
+            {
+                var run = Run(launcher, "--elevate --timeout 50ms -- " + Quote(Self) + " child sleep", relay: true);
+                Assert(run.Code == TimeoutExitCode && run.Error.Contains("Timeout expired"), "relayed timeout: " + run.Code + " " + run.Error);
+                var missing = Run(launcher, "--elevate -- missing-headless-test-" + Guid.NewGuid() + ".exe", relay: true);
+                Assert(missing.Code == LaunchFailureExitCode && missing.Error.Contains("headless-run:"), "relayed launch failure: " + missing.Error);
+            });
+            Test("--elevate: a timeout kills the tree", () => TreeTest("timeout", true));
+            Test("--elevate: killing the caller kills the copy and the tree", () => TreeTest("kill", true));
+            Test("--elevate: the child's exit kills remaining descendants", () => TreeTest("exit", true));
+            Test("--elevate --detach starts the child and returns", () =>
+            {
+                var marker = Path.Combine(root, "elevated-detached.txt");
+                var run = Run(launcher, "--elevate --detach -- " + Quote(Self) + " child later " + Quote(marker), relay: true);
+                Assert(run.Code == 0, run.Error);
+                WaitFor(() => File.Exists(marker), "elevated detached child did not finish");
+            });
+            Test("--elevate does nothing when the caller is already elevated", () =>
+            {
+                if (!Environment.IsPrivilegedProcess)
+                {
+                    // Unelevated, the real path would show a UAC prompt, which no unattended test can answer.
+                    Console.WriteLine("NOTE not elevated; the no-op path is checked only in an elevated run, such as CI");
+                    return;
+                }
+
+                var run = Run(launcher, "--elevate -- " + Quote(Self) + " child echo 5", input: "x");
+                Assert(run.Code == 5 && run.Output == "x", "elevated no-op: " + run.Error);
             });
             Console.WriteLine($"PASS: {passed} integration groups");
             return 0;
@@ -298,6 +355,10 @@ internal static class Program
                 Console.Write("stdout\n");
                 Console.Error.Write("stderr\n");
                 return 0;
+            case "echo":
+                Console.Write(Console.In.ReadToEnd());
+                Console.Error.Write("stderr\n");
+                return int.Parse(args[1], CultureInfo.InvariantCulture);
             case "state":
                 File.WriteAllText(args[1], JsonSerializer.Serialize(new
                 {
@@ -358,15 +419,23 @@ internal static class Program
         File.Move(path + ".pending", path);
     }
 
-    private static void TreeTest(string mode)
+    private static void TreeTest(string mode, bool relay = false)
     {
-        var marker = Path.Combine(root, mode + ".pids");
-        using var process = Start(launcher, (mode == "timeout" ? "--timeout 3s " : "") + "-- " + Quote(Self) + " child tree " + Quote(marker) + " " + mode);
+        var marker = Path.Combine(root, mode + (relay ? "-relay" : "") + ".pids");
+        using var process = Start(launcher, (relay ? "--elevate " : "") + (mode == "timeout" ? "--timeout 3s " : "") + "-- " + Quote(Self) + " child tree " + Quote(marker) + " " + mode, relay);
         int[] pids = [];
         try
         {
             WaitFor(() => File.Exists(marker) && File.ReadAllText(marker).Contains(','), "tree not ready");
             pids = File.ReadAllText(marker).Split(',').Select(int.Parse).ToArray();
+            if (relay)
+            {
+                // The relaying copy is a second launcher process, and it is part of the tree that must end.
+                var copies = LauncherProcesses().Where(id => id != process.Id).ToArray();
+                // In exit mode the child, and with it the copy, may already be gone.
+                Assert(copies.Length == 1 || (mode == "exit" && copies.Length == 0), "expected one relaying launcher copy, found " + copies.Length);
+                pids = [.. pids, .. copies];
+            }
             if (mode == "kill")
             {
                 process.Kill();
@@ -408,6 +477,33 @@ internal static class Program
         }
     }
 
+    private static int[] LauncherProcesses()
+    {
+        List<int> ids = [];
+        foreach (var candidate in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(launcher)))
+        {
+            using (candidate)
+            {
+                try
+                {
+                    if (string.Equals(candidate.MainModule?.FileName, launcher, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ids.Add(candidate.Id);
+                    }
+                }
+                catch (Win32Exception)
+                {
+                    // Another user's or an elevated launcher: not one this test started.
+                }
+                catch (InvalidOperationException)
+                {
+                    // It exited while being listed.
+                }
+            }
+        }
+        return [.. ids];
+    }
+
     private static bool Alive(int pid)
     {
         try
@@ -420,20 +516,40 @@ internal static class Program
             return false;
         }
     }
-    private static Process Start(string executable, string arguments)
+    private static Process Start(string executable, string arguments, bool relay = false, string? input = null, string? directory = null)
     {
-        return Process.Start(new ProcessStartInfo(executable)
+        ProcessStartInfo start = new(executable)
         {
             Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardInput = input is not null,
             RedirectStandardOutput = true,
             RedirectStandardError = true
-        })!;
+        };
+        if (relay)
+        {
+            // The launcher's test seam: --elevate takes its full relay path with the "open" verb, so no UAC prompt.
+            start.Environment[RelayWithoutUacVariable] = "1";
+        }
+
+        if (directory is not null)
+        {
+            start.WorkingDirectory = directory;
+        }
+
+        var process = Process.Start(start)!;
+        if (input is not null)
+        {
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+        }
+
+        return process;
     }
-    private static (int Code, string Output, string Error) Run(string executable, string arguments)
+    private static (int Code, string Output, string Error) Run(string executable, string arguments, bool relay = false, string? input = null, string? directory = null)
     {
-        using var process = Start(executable, arguments);
+        using var process = Start(executable, arguments, relay, input, directory);
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit(LaunchTimeoutMilliseconds))
