@@ -1,6 +1,6 @@
 # headless-run
 
-Run a Windows program without a console window, keep its exact command line, and return its exit code. Designed for Task Scheduler and background automation.
+Run a Windows console program without a console window, keep its exact command line, and return its exit code. Designed for Task Scheduler and background automation.
 
 The launcher is a Windows-subsystem executable. It starts console programs with `CREATE_NO_WINDOW`, using documented Win32 APIs. It requires Windows 10 / Windows Server 2016 or later. Release executables are native, self-contained, and need no .NET runtime installed.
 
