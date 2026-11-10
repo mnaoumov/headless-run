@@ -9,12 +9,24 @@ internal sealed class Options
     private const int SECONDS_IN_MINUTE = 60;
     private const int MINUTES_IN_HOUR = 60;
     private const int BackslashesInEscapedPair = 2;
+    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority"];
+    private static readonly Dictionary<string, uint> PriorityClasses = new(StringComparer.Ordinal)
+    {
+        ["idle"] = Native.IdlePriorityClass,
+        ["below-normal"] = Native.BelowNormalPriorityClass,
+        ["normal"] = Native.NormalPriorityClass,
+        ["above-normal"] = Native.AboveNormalPriorityClass,
+        ["high"] = Native.HighPriorityClass,
+        ["realtime"] = Native.RealtimePriorityClass
+    };
     public string? Output;
     public string? Error;
     public string? Directory;
     public bool Append;
     public bool Detach;
-    public bool BelowNormal;
+    public bool CreateDirectory;
+    public bool WindowsPowerShell;
+    public uint PriorityClass;
     public bool Help;
     public bool Version;
     public uint Timeout = uint.MaxValue;
@@ -24,6 +36,7 @@ internal sealed class Options
     public void Parse(string commandLine)
     {
         var position = 0;
+        string? inlineValue = null;
         ReadToken(commandLine, ref position); // launcher executable, never forwarded
         while (position < commandLine.Length)
         {
@@ -39,6 +52,17 @@ internal sealed class Options
                 SkipSpace(commandLine, ref position);
                 Tail = commandLine[position..]; // Do not parse or reconstruct the child command line.
                 break;
+            }
+            inlineValue = null;
+            var equals = flag.IndexOf('=');
+            if (flag.StartsWith("--", StringComparison.Ordinal) && equals > 0)
+            {
+                inlineValue = flag[(equals + 1)..];
+                flag = flag[..equals];
+                if (!ValueOptions.Contains(flag))
+                {
+                    throw new ArgumentException($"Option '{flag}' does not accept '=VALUE'. Use --help.");
+                }
             }
             switch (flag)
             {
@@ -60,8 +84,19 @@ internal sealed class Options
                 case "--detach":
                     Detach = true;
                     break;
-                case "--below-normal":
-                    BelowNormal = true;
+                case "--create-cwd":
+                    CreateDirectory = true;
+                    break;
+                case "--windows-powershell":
+                    WindowsPowerShell = true;
+                    break;
+                case "--priority":
+                    var priority = ReadValue(flag);
+                    if (!PriorityClasses.TryGetValue(priority, out PriorityClass))
+                    {
+                        throw new ArgumentException($"--priority requires one of {string.Join(", ", PriorityClasses.Keys)}; got '{priority}'.");
+                    }
+
                     break;
                 case "--help":
                     Help = true;
@@ -74,13 +109,13 @@ internal sealed class Options
                     break;
                 case "--env":
                     var entry = ReadValue(flag);
-                    var equals = entry.IndexOf('=');
-                    if (equals <= 0)
+                    var separator = entry.IndexOf('=');
+                    if (separator <= 0)
                     {
                         throw new ArgumentException("--env requires NAME=VALUE with a nonempty name.");
                     }
 
-                    Environment[entry[..equals]] = entry[(equals + 1)..];
+                    Environment[entry[..separator]] = entry[(separator + 1)..];
                     break;
                 default:
                     throw new ArgumentException($"Unknown option '{flag}'. Use --help.");
@@ -104,6 +139,16 @@ internal sealed class Options
 
         string ReadValue(string flag)
         {
+            if (inlineValue is not null)
+            {
+                if (inlineValue.Length == 0 && flag != "--env")
+                {
+                    throw new ArgumentException($"Empty value for {flag}.");
+                }
+
+                return inlineValue;
+            }
+
             SkipSpace(commandLine, ref position);
             if (position == commandLine.Length)
             {

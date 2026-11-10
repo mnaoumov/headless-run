@@ -18,9 +18,10 @@ internal static class Program
             options.Parse(Marshal.PtrToStringUni(Native.GetCommandLineW())!);
             if (options.Help || options.Version)
             {
-                var text = options.Help ? Help : "headless-run 0.1.0\n";
+                var text = options.Help ? Help : "headless-run 1.0.0\n";
                 if (options.Output is not null)
                 {
+                    CreateParentDirectory(options.Output);
                     if (options.Append)
                     {
                         File.AppendAllText(options.Output, text);
@@ -49,6 +50,8 @@ internal static class Program
     private static int Launch(Options options)
     {
         using Resources resources = new();
+        var (application, commandLine) = ResolveCommand(options);
+        PrepareWorkingDirectory(options);
         var input = StandardHandle(Native.StandardInputHandle, null, false, true, resources);
         var output = StandardHandle(Native.StandardOutputHandle, options.Output, options.Append, false, resources);
         var error = options.Error is not null && options.Output is not null &&
@@ -113,12 +116,8 @@ internal static class Program
                 Attributes = attributes
             };
             var flags = Native.CreateNoWindow | Native.ExtendedStartupInfoPresent | Native.CreateUnicodeEnvironment; // NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | UNICODE_ENVIRONMENT
-            if (options.BelowNormal)
-            {
-                flags |= Native.BelowNormalPriorityClass;
-            }
-
-            Check(Native.CreateProcessW(null, new StringBuilder(options.Tail), 0, 0, true, flags, environment,
+            flags |= options.PriorityClass; // 0 when --priority is omitted: Windows picks the default class.
+            Check(Native.CreateProcessW(application, new StringBuilder(commandLine), 0, 0, true, flags, environment,
                 options.Directory, ref startup, out var process));
             resources.Handle(process.Process);
             resources.Handle(process.Thread);
@@ -153,9 +152,97 @@ internal static class Program
         }
     }
 
+    // A native executable gets the raw tail unchanged. Scripts go to their interpreter,
+    // which then applies its own argument rules to the same raw text.
+    private static (string? Application, string CommandLine) ResolveCommand(Options options)
+    {
+        var extension = Path.GetExtension(ProgramToken(options.Tail)).ToLowerInvariant();
+        if (options.WindowsPowerShell && extension != ".ps1")
+        {
+            throw new ArgumentException("--windows-powershell applies only when the program is a .ps1 script.");
+        }
+
+        switch (extension)
+        {
+            case ".cmd":
+            case ".bat":
+                var shell = Environment.GetEnvironmentVariable("ComSpec") is { Length: > 0 } comSpec
+                    ? comSpec
+                    : Path.Combine(Environment.SystemDirectory, "cmd.exe");
+                // /s /c "<tail>": cmd strips exactly the outer quote pair and runs the rest as written.
+                return (shell, $"\"{shell}\" /d /s /c \"{options.Tail}\"");
+            case ".ps1":
+                var host = options.WindowsPowerShell
+                    ? Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe")
+                    : FindOnPath("pwsh.exe", options) ?? throw new FileNotFoundException(
+                        "A .ps1 script runs under pwsh (PowerShell 7 or later), which was not found on PATH. " +
+                        "Install PowerShell 7, or pass --windows-powershell to use Windows PowerShell 5.1.");
+                return (host, $"\"{host}\" -NoProfile -NonInteractive -File {options.Tail}");
+            default:
+                return (null, options.Tail);
+        }
+    }
+
+    // The program token as CreateProcessW reads it: up to the closing quote, or up to whitespace.
+    private static string ProgramToken(string tail)
+    {
+        if (tail.StartsWith('"'))
+        {
+            var end = tail.IndexOf('"', 1);
+            return end < 0 ? tail[1..] : tail[1..end];
+        }
+
+        var space = tail.IndexOfAny([' ', '\t']);
+        return space < 0 ? tail : tail[..space];
+    }
+
+    private static string? FindOnPath(string fileName, Options options)
+    {
+        var path = options.Environment.TryGetValue("PATH", out var overridden)
+            ? overridden
+            : Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var directory in path.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var candidate = Path.Combine(directory.Trim('"'), fileName);
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+        return null;
+    }
+
+    private static void PrepareWorkingDirectory(Options options)
+    {
+        if (options.Directory is null || Directory.Exists(options.Directory))
+        {
+            return;
+        }
+
+        if (!options.CreateDirectory)
+        {
+            throw new DirectoryNotFoundException($"Working directory '{options.Directory}' does not exist. Pass --create-cwd to create it.");
+        }
+
+        Directory.CreateDirectory(options.Directory);
+    }
+
+    private static void CreateParentDirectory(string path)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (parent is not null)
+        {
+            Directory.CreateDirectory(parent);
+        }
+    }
+
     private static nint StandardHandle(int kind, string? path, bool append, bool input, Resources resources)
     {
-        if (path is null)
+        if (path is not null)
+        {
+            CreateParentDirectory(path);
+        }
+        else
         {
             var inherited = Native.GetStdHandle(kind);
             if (inherited != 0 && inherited != -1)
@@ -189,6 +276,7 @@ internal static class Program
         {
             if (options.Error is not null)
             {
+                CreateParentDirectory(options.Error);
                 File.AppendAllText(options.Error, text);
             }
             else
@@ -237,20 +325,24 @@ internal static class Program
     }
 
     private const string Help = """
-        headless-run 0.1.0 - launch a program without a console window
+        headless-run 1.0.0 - run a console program without a console window
         Usage: headless-run.exe [options] -- <program> [arguments...]
-        --stdout FILE       Redirect stdout (overwrite by default)
-        --stderr FILE       Redirect stderr and launcher diagnostics
-        --append            Append both output files
-        --overwrite         Overwrite both output files (default)
-        --cwd DIR           Child working directory
-        --env NAME=VALUE    Override an environment variable (repeatable)
-        --below-normal      Start at below-normal priority
-        --timeout DURATION  Terminate the whole job after 250ms, 30s, 2m or 1h
-        --detach            Return after start; no launcher-owned job or timeout
-        --help              Print this help
-        --version           Print version
+        --stdout FILE         Redirect stdout (overwrite by default)
+        --stderr FILE         Redirect stderr and launcher diagnostics
+        --append              Append both output files
+        --overwrite           Overwrite both output files (default)
+        --cwd DIR             Child working directory; must exist
+        --create-cwd          Create the --cwd directory when it is missing
+        --env NAME=VALUE      Override an environment variable (repeatable)
+        --priority CLASS      idle, below-normal, normal, above-normal, high or realtime
+        --timeout DURATION    Terminate the whole job after 250ms, 30s, 2m or 1h
+        --detach              Return after start; no launcher-owned job or timeout
+        --windows-powershell  Run a .ps1 under Windows PowerShell instead of pwsh
+        --help                Print this help
+        --version             Print version
+        Value options also accept --name=VALUE. Output parent directories are created.
+        .cmd/.bat run under cmd.exe /d /s /c; .ps1 under pwsh -NoProfile -NonInteractive -File.
         Exit: child's code; 124 timeout; 125 launcher failure; 0 detached/help/version.
-        Quote executable paths containing spaces. No shell expansion is performed.
+        Quote program paths containing spaces. No shell expansion is performed.
         """ + "\n";
 }

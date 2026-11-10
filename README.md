@@ -6,7 +6,7 @@ The launcher is a Windows-subsystem executable. It starts console programs with 
 
 ## Install
 
-Download `headless-run-win-x64.exe` or `headless-run-win-arm64.exe` from [Releases](https://github.com/mnaoumov/headless-run/releases), verify it against the adjacent `.sha256` file, and rename it to `headless-run.exe` in a directory on `PATH`.
+Download `headless-run-win-x64.exe`, `headless-run-win-x86.exe` or `headless-run-win-arm64.exe` from [Releases](https://github.com/mnaoumov/headless-run/releases), verify it against the adjacent `.sha256` file, and rename it to `headless-run.exe` in a directory on `PATH`.
 
 The binaries are unsigned; Windows may ask you to confirm a downloaded executable.
 
@@ -19,30 +19,42 @@ headless-run.exe [options] -- <program> [arguments...]
 For a scheduled task, set **Program/script** to the full path of `headless-run.exe`, and **Add arguments** to:
 
 ```text
---stderr "C:\Logs\nightly.err" --stdout "C:\Logs\nightly.out" --append --timeout 30m -- "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -File "C:\Scripts\nightly.ps1"
+--stderr "C:\Logs\nightly-stderr.txt" --stdout "C:\Logs\nightly-stdout.txt" --append --timeout 30m -- "C:\Scripts\nightly.ps1"
 ```
 
-Quote the program path when it contains spaces. The launcher removes the option prefix, `--`, and separating spaces/tabs; it forwards every character from the program onwards unchanged to `CreateProcessW`. It never splits or re-quotes child arguments. Child programs still interpret their own command line according to their own rules.
+Quote the program path when it contains spaces. The launcher removes the option prefix, `--`, and separating spaces/tabs; it forwards every character from the program onwards unchanged. It never splits or re-quotes child arguments. Child programs still interpret their own command line according to their own rules.
 
-There is no shell expansion: `&`, `^`, `%`, `|`, `$` and redirection characters are ordinary characters unless you explicitly invoke a shell. To run a `.cmd`/`.bat` file, invoke `cmd.exe /c` and follow its quoting rules. A calling shell processes its own syntax before the launcher sees it; for precise automation use Task Scheduler's argument field or an API that accepts a raw command line.
+A calling shell processes its own syntax before the launcher sees it; for precise automation use Task Scheduler's argument field or an API that accepts a raw command line.
+
+## Programs and scripts
+
+The extension of the program decides how it starts. The comparison ignores case.
+
+1. **A native executable** (anything other than the extensions below): the raw text from the program onwards goes to `CreateProcessW` as the command line. There is no shell expansion: `&`, `^`, `%`, `|`, `$` and redirection characters are ordinary characters, and the program parses its own arguments.
+2. **`.cmd` or `.bat`**: runs as `cmd.exe /d /s /c "<raw text>"`, where `cmd.exe` is `%ComSpec%`. `/d` skips AutoRun commands, and `/s` makes `cmd.exe` strip exactly the outer quote pair it was given, so the raw text runs as written. `cmd.exe` rules then apply to the arguments: `%NAME%` expands, `&`, `|`, `<`, `>` and `^` are operators unless quoted or escaped, and the script reads `%1` with its quotes and `%~1` without them.
+3. **`.ps1`**: runs as `pwsh -NoProfile -NonInteractive -File <raw text>`, with `pwsh.exe` found on `PATH` (an `--env PATH=...` override is searched instead of the launcher's own). `-File` binds each argument as a literal string, so `$name` and `$(...)` are not evaluated. A missing `pwsh` is a launcher failure (125) that names the fix; Windows PowerShell 5.1 runs a script only when `--windows-powershell` asks for it, never as a silent fallback. Execution policy is the host's own: `pwsh` on Windows defaults to `RemoteSigned`. For other host flags, run `pwsh.exe` as the program yourself.
+
+The interpreter's exit code is returned: `exit /b <n>` from a batch file, `exit <n>` from a script.
 
 ## Options
 
-All launcher options precede `--`. Values use Windows double-quote/backslash rules. Repeating an option uses its last value; `--env` keeps the last value per case-insensitive name.
+All launcher options precede `--`. Values use Windows double-quote/backslash rules. Every option that takes a value accepts both `--name VALUE` and `--name=VALUE`, such as `--priority=below-normal` or `--env=NAME=VALUE`. Repeating an option uses its last value; `--env` keeps the last value per case-insensitive name.
 
-1. `--stdout FILE`: redirect standard output to a file; overwrite by default.
-2. `--stderr FILE`: redirect standard error and launcher diagnostics to a file; overwrite by default once stream setup reaches it. Diagnostics before stream setup append to preserve earlier messages. An error in the options can use only a `--stderr` parsed before that error.
+1. `--stdout FILE`: redirect standard output to a file; overwrite by default. Missing parent directories are created.
+2. `--stderr FILE`: redirect standard error and launcher diagnostics to a file; overwrite by default once stream setup reaches it. Diagnostics before stream setup append to preserve earlier messages. An error in the options can use only a `--stderr` parsed before that error. Missing parent directories are created.
 3. `--append`: append both redirected files. Each write appends, including writes from descendants.
 4. `--overwrite`: overwrite both redirected files (default). The last append/overwrite flag wins regardless of its position.
-5. `--cwd DIR`: set the child's working directory. Relative output paths resolve against the launcher's working directory, independently of this option. Directories must already exist.
-6. `--env NAME=VALUE`: override one inherited environment variable; repeat for more variables. Values may contain `=`. An empty value sets an empty variable; it does not remove the name. The parent's environment stays unchanged.
-7. `--below-normal`: start the child with below-normal process priority.
-8. `--timeout DURATION`: wait at most a positive duration with `ms`, `s`, `m` or `h` suffix, such as `250ms`, `0.5s`, `30m`, `1h`. Fractions round up to milliseconds. Maximum: `4294967294ms` (about 49.7 days). Timing begins after process creation. Expiry terminates the job and returns 124.
-9. `--detach`: return 0 after successful process creation, without creating a launcher-owned job. Cannot combine with `--timeout`. The child can outlive the launcher; an enclosing job imposed by the caller still applies. Redirect output to files for unattended use: inherited pipes remain open in the child and may keep the caller waiting for EOF.
-10. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
-11. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
+5. `--cwd DIR`: set the child's working directory. It must exist: a missing directory is a launcher failure (125), so a mistyped path never runs the job in a fresh empty folder. Relative output paths resolve against the launcher's working directory, independently of this option.
+6. `--create-cwd`: create the `--cwd` directory, with its parents, when it is missing.
+7. `--env NAME=VALUE`: override one inherited environment variable; repeat for more variables. Values may contain `=`. An empty value sets an empty variable; it does not remove the name. The parent's environment stays unchanged.
+8. `--priority CLASS`: start the child in a process priority class: `idle`, `below-normal`, `normal`, `above-normal`, `high` or `realtime`. Omitted, Windows chooses as usual: `normal`, or the launcher's own class when that is `idle` or `below-normal`. A priority class only orders who runs first when processors are contended; it is not a CPU cap, and a low-priority child still uses an idle processor fully. `realtime` preempts the threads of every other process, including system tasks, so a busy realtime child can leave the mouse unresponsive and disk caches unflushed, freezing the desktop; without the "Increase scheduling priority" privilege Windows starts it at `high` instead. An enclosing job with a priority limit overrides the requested class.
+9. `--timeout DURATION`: wait at most a positive duration with `ms`, `s`, `m` or `h` suffix, such as `250ms`, `0.5s`, `30m`, `1h`. Fractions round up to milliseconds. Maximum: `4294967294ms` (about 49.7 days). Timing begins after process creation. Expiry terminates the job and returns 124.
+10. `--detach`: return 0 after successful process creation, without creating a launcher-owned job. Cannot combine with `--timeout`. The child can outlive the launcher; an enclosing job imposed by the caller still applies. Redirect output to files for unattended use: inherited pipes remain open in the child and may keep the caller waiting for EOF.
+11. `--windows-powershell`: run a `.ps1` program under Windows PowerShell 5.1 (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`) instead of `pwsh`. Any other program with this option is a launcher failure.
+12. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
+13. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
 
-Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; the tool does not create parent directories or rotate logs.
+Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; the tool does not rotate logs.
 
 ## Exit codes and lifetime
 
@@ -65,7 +77,7 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) on 
 pwsh -NoProfile -File scripts/test.ps1
 ```
 
-The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, environment, cwd, priority, console visibility, failures, timeout, descendant cleanup, launcher termination and detach.
+The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.cmd`/`.bat`/`.ps1` dispatch and their argument rules, console visibility, failures, timeout, descendant cleanup, launcher termination and detach.
 
 For a runtime-free executable, install the [NativeAOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) and run:
 
@@ -74,7 +86,7 @@ dotnet publish src/headless-run -c Release -r win-x64 -p:PublishAot=true -o arti
 pwsh -NoProfile -File scripts/test.ps1 -Launcher ./artifacts/win-x64/headless-run.exe
 ```
 
-Use `win-arm64` on an ARM64 machine. CI builds and tests NativeAOT. Pushing a `vX.Y.Z` tag matching the project version publishes both architectures and their SHA-256 checksums after the native tests pass.
+Use `win-x86` for a 32-bit build, and `win-arm64` on an ARM64 machine. CI builds and tests NativeAOT for x64 and x86. Pushing a `vX.Y.Z` tag matching the project version publishes x64, x86 and ARM64 executables and their SHA-256 checksums after the native tests pass.
 
 ## Implementation references
 

@@ -14,8 +14,26 @@ internal static class Program
     private const int ConditionPollMilliseconds = 25;
     private const int TimeoutExitCode = 124;
     private const int LaunchFailureExitCode = 125;
+    private const int JobObjectBasicLimitInformation = 2;
+    private const uint JobObjectLimitPriorityClass = 0x20;
     [DllImport("kernel32.dll")]
     private static extern nint GetConsoleWindow();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(nint job, int kind, out BasicLimits limits, uint size, nint returnedSize);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimits
+    {
+        public long ProcessTime;
+        public long JobTime;
+        public uint Flags;
+        public nuint MinimumWorkingSet;
+        public nuint MaximumWorkingSet;
+        public uint ActiveProcesses;
+        public nuint Affinity;
+        public uint Priority;
+        public uint Scheduling;
+    }
     private static string Self => Environment.ProcessPath!;
     private static string launcher = "";
     private static string root = "";
@@ -100,7 +118,7 @@ internal static class Program
                 var directory = Path.Combine(root, "working directory");
                 Directory.CreateDirectory(directory);
                 var result = Path.Combine(root, "state.json");
-                var run = Run(launcher, "--cwd " + Quote(directory) + " --env \"HEADLESS_TEST=first\" --env \"headless_test=héllo=世界\" --env HEADLESS_EMPTY= --below-normal -- " + Quote(Self) + " child state " + Quote(result));
+                var run = Run(launcher, "--cwd " + Quote(directory) + " --env \"HEADLESS_TEST=first\" --env \"headless_test=héllo=世界\" --env HEADLESS_EMPTY= --priority below-normal -- " + Quote(Self) + " child state " + Quote(result));
                 Assert(run.Code == 0, run.Error);
                 using var state = JsonDocument.Parse(File.ReadAllText(result));
                 Assert(state.RootElement.GetProperty("cwd").GetString() == directory, "cwd");
@@ -109,9 +127,101 @@ internal static class Program
                 Assert(state.RootElement.GetProperty("console").GetInt64() == 0, "console window created");
                 Assert(Environment.GetEnvironmentVariable("HEADLESS_TEST") is null, "parent environment changed");
             });
+            Test("every priority class, in both value spellings", () =>
+            {
+                // Windows grants realtime only with SeIncreaseBasePriorityPrivilege; otherwise it starts the child at high.
+                (string Value, string[] Expected)[] cases = [
+                    ("idle", ["Idle"]),
+                    ("below-normal", ["BelowNormal"]),
+                    ("normal", ["Normal"]),
+                    ("above-normal", ["AboveNormal"]),
+                    ("high", ["High"]),
+                    ("realtime", ["RealTime", "High"])
+                ];
+                // An enclosing job with a priority-class limit overrides every class the launcher requests.
+                var imposed = ImposedPriority();
+                if (imposed is not null)
+                {
+                    Console.WriteLine("NOTE an enclosing job imposes priority " + imposed + "; expecting it for every class");
+                }
+
+                foreach (var (value, expected) in cases)
+                {
+                    foreach (var spelling in new[] { "--priority " + value, "--priority=" + value })
+                    {
+                        var actual = ChildPriority(spelling);
+                        Assert(imposed is null ? expected.Contains(actual) : actual == imposed, spelling + " gave " + actual);
+                    }
+                }
+                // Omitted: Windows' default, which is normal unless the parent runs at idle or below-normal.
+                var own = Process.GetCurrentProcess().PriorityClass;
+                var inherited = own is ProcessPriorityClass.Idle or ProcessPriorityClass.BelowNormal ? own : ProcessPriorityClass.Normal;
+                Assert(ChildPriority("") == (imposed ?? inherited.ToString()), "omitted priority");
+            });
+            Test("equals form for every value option", () =>
+            {
+                var directory = Path.Combine(root, "equals cwd");
+                Directory.CreateDirectory(directory);
+                var output = Path.Combine(root, "equals-stdout.txt");
+                var error = Path.Combine(root, "equals-stderr.txt");
+                var result = Path.Combine(root, "equals-state.json");
+                var run = Run(launcher, "--stdout=" + Quote(output) + " --stderr=" + Quote(error) + " --cwd=" + Quote(directory) + " --env=\"HEADLESS_TEST=a=b\" --timeout=30s -- " + Quote(Self) + " child state " + Quote(result));
+                Assert(run.Code == 0, run.Error);
+                using var state = JsonDocument.Parse(File.ReadAllText(result));
+                Assert(state.RootElement.GetProperty("cwd").GetString() == directory, "cwd");
+                Assert(state.RootElement.GetProperty("env").GetString() == "a=b", "environment");
+                Assert(File.Exists(output) && File.Exists(error), "output files");
+            });
+            Test("output parents are created; a missing cwd needs --create-cwd", () =>
+            {
+                var output = Path.Combine(root, "logs", "nested deeper", "nightly-stdout.txt");
+                var error = Path.Combine(root, "logs", "other", "nightly-stderr.txt");
+                Assert(Run(launcher, "--stdout " + Quote(output) + " --stderr " + Quote(error) + " -- " + Quote(Self) + " child streams").Code == 0, "nested output launch");
+                Assert(File.ReadAllText(output) == "stdout\n" && File.ReadAllText(error) == "stderr\n", "nested output files");
+                var diagnostics = Path.Combine(root, "diagnostics", "nightly-stderr.txt");
+                Assert(Run(launcher, "--stderr " + Quote(diagnostics) + " --bad").Code == LaunchFailureExitCode, "early diagnostic exit");
+                Assert(File.ReadAllText(diagnostics).Contains("headless-run:"), "early diagnostic in a created directory");
+                var missing = Path.Combine(root, "missing cwd", "deeper");
+                var refused = Run(launcher, "--cwd " + Quote(missing) + " -- " + Quote(Self) + " child exit 0");
+                Assert(refused.Code == LaunchFailureExitCode && refused.Error.Contains("--create-cwd"), "missing cwd must fail");
+                Assert(!Directory.Exists(missing), "missing cwd was created without --create-cwd");
+                var result = Path.Combine(root, "created-cwd.json");
+                Assert(Run(launcher, "--create-cwd --cwd " + Quote(missing) + " -- " + Quote(Self) + " child state " + Quote(result)).Code == 0, "create cwd");
+                using var state = JsonDocument.Parse(File.ReadAllText(result));
+                Assert(state.RootElement.GetProperty("cwd").GetString() == missing, "created cwd");
+            });
+            Test("cmd and bat scripts run under cmd.exe with its argument rules", () =>
+            {
+                var directory = Path.Combine(root, "scripts with space");
+                Directory.CreateDirectory(directory);
+                foreach (var extension in new[] { ".cmd", ".bat", ".CMD" })
+                {
+                    var script = Path.Combine(directory, "echo args" + extension);
+                    File.WriteAllText(script, "@echo off\r\necho [%~1] [%~2] [%3]\r\nexit /b 9\r\n");
+                    // cmd.exe strips the quotes with %~1 and expands %NAME% inside arguments.
+                    var run = Run(launcher, "--env HEADLESS_TEST=expanded -- " + Quote(script) + " \"a b\" %HEADLESS_TEST% \"q\"");
+                    Assert(run.Code == 9, extension + " exit code: " + run.Code + " " + run.Error);
+                    Assert(run.Output.Trim() == "[a b] [expanded] [\"q\"]", extension + " arguments: " + run.Output);
+                }
+            });
+            Test("ps1 scripts run under pwsh, or Windows PowerShell on request", () =>
+            {
+                var directory = Path.Combine(root, "ps scripts");
+                Directory.CreateDirectory(directory);
+                var script = Path.Combine(directory, "echo args.ps1");
+                File.WriteAllText(script, "param([string] $First, [string] $Second)\r\n[Console]::Out.Write(\"[$First] [$Second] $($PSVersionTable.PSEdition)\")\r\nexit 7\r\n");
+                // pwsh -File passes arguments as literal strings: no variable expansion.
+                var run = Run(launcher, "-- " + Quote(script) + " \"a b\" $env:HEADLESS_TEST");
+                Assert(run.Code == 7, "pwsh exit code: " + run.Code + " " + run.Error);
+                Assert(run.Output == "[a b] [$env:HEADLESS_TEST] Core", "pwsh arguments: " + run.Output);
+                var legacy = Run(launcher, "--windows-powershell -- " + Quote(script) + " \"a b\" c");
+                Assert(legacy.Code == 7 && legacy.Output == "[a b] [c] Desktop", "Windows PowerShell: " + legacy.Output + legacy.Error);
+                var missing = Run(launcher, "--env " + Quote("PATH=" + directory) + " -- " + Quote(script));
+                Assert(missing.Code == LaunchFailureExitCode && missing.Error.Contains("pwsh") && missing.Error.Contains("--windows-powershell"), "missing pwsh: " + missing.Error);
+            });
             Test("launch and usage failures produce diagnostics", () =>
             {
-                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated" })
+                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0" })
                 {
                     var run = Run(launcher, command);
                     Assert(run.Code == LaunchFailureExitCode && run.Error.Contains("headless-run:"), "missing failure: " + command);
@@ -119,13 +229,13 @@ internal static class Program
                 var error = Path.Combine(root, "failure.txt");
                 Assert(Run(launcher, "--stderr " + Quote(error) + " -- nonexistent-headless-test.exe").Code == LaunchFailureExitCode, "error file exit");
                 Assert(File.ReadAllText(error).Contains("headless-run:"), "error file diagnostic");
-                Assert(Run(launcher, "--stdout " + Quote(Path.Combine(root, "absent", "file")) + " -- " + Quote(Self) + " child exit 0").Code == LaunchFailureExitCode, "bad redirection");
+                Assert(Run(launcher, "--stdout " + Quote(Path.Combine(root, "stdout-is-a-directory")) + " --create-cwd --cwd " + Quote(Path.Combine(root, "stdout-is-a-directory")) + " -- " + Quote(Self) + " child exit 0").Code == LaunchFailureExitCode, "bad redirection");
                 Assert(Run(launcher, "--cwd " + Quote(Path.Combine(root, "absent")) + " -- " + Quote(Self) + " child exit 0").Code == LaunchFailureExitCode, "bad cwd");
             });
             Test("help and version", () =>
             {
                 Assert(Run(launcher, "--help").Output.Contains("Usage:"), "help");
-                Assert(Run(launcher, "--version   ").Output == "headless-run 0.1.0\n", "version");
+                Assert(Run(launcher, "--version   ").Output == "headless-run 1.0.0\n", "version");
             });
             Test("timeout writes redirected diagnostic", () =>
             {
@@ -219,6 +329,27 @@ internal static class Program
             default:
                 throw new ArgumentException("Unknown helper command");
         }
+    }
+
+    private static string? ImposedPriority()
+    {
+        // A null job handle queries the job that contains this process.
+        if (!QueryInformationJobObject(0, JobObjectBasicLimitInformation, out var limits, (uint) Marshal.SizeOf<BasicLimits>(), 0) ||
+            (limits.Flags & JobObjectLimitPriorityClass) == 0)
+        {
+            return null;
+        }
+
+        return ((ProcessPriorityClass) limits.Priority).ToString();
+    }
+
+    private static string ChildPriority(string options)
+    {
+        var result = Path.Combine(root, "priority-" + Guid.NewGuid().ToString("N") + ".json");
+        var run = Run(launcher, options + " -- " + Quote(Self) + " child state " + Quote(result));
+        Assert(run.Code == 0, options + ": " + run.Error);
+        using var state = JsonDocument.Parse(File.ReadAllText(result));
+        return state.RootElement.GetProperty("priority").GetString()!;
     }
 
     private static void PublishMarker(string path, string text)

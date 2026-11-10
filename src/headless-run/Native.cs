@@ -19,7 +19,12 @@ internal static class Native
     internal const uint CreateNoWindow = 0x08000000;
     internal const uint ExtendedStartupInfoPresent = 0x00080000;
     internal const uint CreateUnicodeEnvironment = 0x400;
+    internal const uint IdlePriorityClass = 0x40;
     internal const uint BelowNormalPriorityClass = 0x4000;
+    internal const uint NormalPriorityClass = 0x20;
+    internal const uint AboveNormalPriorityClass = 0x8000;
+    internal const uint HighPriorityClass = 0x80;
+    internal const uint RealtimePriorityClass = 0x100;
     internal const uint WaitTimeout = 0x102;
     internal const uint WaitObjectSignaled = 0;
     internal const uint InfiniteWait = uint.MaxValue;
