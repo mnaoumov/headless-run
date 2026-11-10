@@ -55,12 +55,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
+      - name: Extract release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $lines = Get-Content CHANGELOG.md
+          $start = [Array]::FindIndex($lines, [Predicate[string]] { param($line) $line -match "^## $([regex]::Escape($version))( |$)" })
+          if ($start -lt 0) { throw "CHANGELOG.md has no section for $version" }
+          $end = [Array]::FindIndex($lines, $start + 1, [Predicate[string]] { param($line) $line -match '^## ' })
+          if ($end -lt 0) { $end = $lines.Length }
+          $notes = ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
+          if (-not $notes) { throw "The CHANGELOG.md section for $version is empty" }
+          [IO.File]::WriteAllText("$PWD/release-notes.md", ($notes -replace '(?m)^###', '##') + "`n")
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --notes-file release-notes.md --generate-notes
