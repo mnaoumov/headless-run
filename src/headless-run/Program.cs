@@ -38,7 +38,13 @@ internal static class Program
 
                 return 0;
             }
-            return Launch(options);
+            if (Elevation.Required(options))
+            {
+                return Elevation.Run(options);
+            }
+
+            var caller = options.ElevatedRelay is null ? 0 : Elevation.Attach(options);
+            return Launch(options, caller);
         }
         catch (Exception error)
         {
@@ -47,9 +53,15 @@ internal static class Program
         }
     }
 
-    private static int Launch(Options options)
+    // caller: under --elevate, the unelevated launcher this copy relays for; its exit ends the run.
+    private static int Launch(Options options, nint caller)
     {
         using Resources resources = new();
+        if (caller != 0)
+        {
+            resources.Handle(caller);
+        }
+
         var (application, commandLine) = ResolveCommand(options);
         PrepareWorkingDirectory(options);
         var input = StandardHandle(Native.StandardInputHandle, null, false, true, resources);
@@ -126,7 +138,16 @@ internal static class Program
                 return 0;
             }
 
-            var wait = Native.WaitForSingleObject(process.Process, options.Timeout);
+            var wait = caller == 0
+                ? Native.WaitForSingleObject(process.Process, options.Timeout)
+                : Native.WaitForMultipleObjects(2, [process.Process, caller], false, options.Timeout);
+            if (wait == Native.WaitObjectSecondSignaled)
+            {
+                // The caller is gone, so nobody is left to relay to: end the tree as its own kill would have.
+                Check(Native.TerminateJobObject(job, LaunchFailure));
+                return LaunchFailure;
+            }
+
             if (wait == Native.WaitTimeout)
             {
                 Check(Native.TerminateJobObject(job, TimedOut));
@@ -338,6 +359,7 @@ internal static class Program
         --timeout DURATION    Terminate the whole job after 250ms, 30s, 2m or 1h
         --detach              Return after start; no launcher-owned job or timeout
         --windows-powershell  Run a .ps1 under Windows PowerShell instead of pwsh
+        --elevate             Run elevated, after a UAC prompt; streams are relayed
         --help                Print this help
         --version             Print version
         Value options also accept --name=VALUE. Output parent directories are created.

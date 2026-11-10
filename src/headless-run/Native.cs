@@ -39,6 +39,23 @@ internal static class Native
     internal const uint OpenAlways = 4;
     internal const uint CreateAlways = 2;
     internal const uint FileAttributeNormal = 0x80;
+    private const string Advapi32Library = "advapi32.dll";
+    private const string User32Library = "user32.dll";
+    internal const uint WaitObjectSecondSignaled = 1;
+    internal const uint Synchronize = 0x00100000;
+    internal const uint TokenQuery = 0x0008;
+    internal const int TokenElevationClass = 20;
+    internal const int UserObjectFlagsIndex = 1;
+    internal const uint WindowStationVisible = 1;
+    internal const int ErrorCancelled = 1223;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct UserObjectFlags
+    {
+        public int Inherit;
+        public int Reserved;
+        public uint Flags;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct SecurityAttributes
@@ -157,6 +174,30 @@ internal static class Native
     [DllImport(Kernel32Library, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetExitCodeProcess(nint process, out uint code);
+    [DllImport(Kernel32Library, SetLastError = true)]
+    internal static extern uint WaitForMultipleObjects(uint count, nint[] handles, [MarshalAs(UnmanagedType.Bool)] bool waitAll, uint milliseconds);
+    [DllImport(Kernel32Library, SetLastError = true)]
+    internal static extern nint OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
+    [DllImport(Kernel32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetStdHandle(int kind, nint handle);
+    [DllImport(Kernel32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetNamedPipeClientProcessId(nint pipe, out uint processId);
+    [DllImport(Kernel32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetNamedPipeServerProcessId(nint pipe, out uint processId);
+    [DllImport(Advapi32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenProcessToken(nint process, uint access, out nint token);
+    [DllImport(Advapi32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetTokenInformation(nint token, int kind, out uint value, uint size, out uint returnedSize);
+    [DllImport(User32Library, SetLastError = true)]
+    internal static extern nint GetProcessWindowStation();
+    [DllImport(User32Library, EntryPoint = "GetUserObjectInformationW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetUserObjectInformation(nint handle, int kind, out UserObjectFlags flags, uint size, out uint returnedSize);
     [DllImport(Kernel32Library, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool WriteFile(nint file, byte[] buffer, uint length, out uint written, nint overlapped);
