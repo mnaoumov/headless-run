@@ -7,6 +7,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 // The launcher is Windows-only throughout; this states it for the platform analyzer.
 [assembly: SupportedOSPlatform("windows")]
@@ -66,6 +67,11 @@ internal static class Elevation
         using var input = options.Detach ? null : Server(name + InputPipe, PipeDirection.Out, security);
         using var output = options.Detach || options.Output is not null ? null : Server(name + OutputPipe, PipeDirection.In, security);
         using var error = options.Detach || options.Error is not null ? null : Server(name + ErrorPipe, PipeDirection.In, security);
+        // --tray: this unelevated caller hosts the icon. It sees every relayed byte, and its own windows
+        // need no UIPI exceptions to hear Explorer.
+        var capture = options.Tray ? new OutputCapture() : null;
+        var sharedFile = Program.SharesFile(options);
+        capture?.FollowLogs(options, sharedFile);
         Process copy;
         try
         {
@@ -92,21 +98,45 @@ internal static class Elevation
             if (input is not null)
             {
                 // Not awaited: the caller's stdin may never reach EOF, and the child's exit ends the run.
-                _ = Serve(input, copyId, stop.Token, pipe => Pump(Console.OpenStandardInput(), pipe));
+                _ = Serve(input, copyId, stop.Token, pipe => Pump(Console.OpenStandardInput(), pipe, null));
             }
 
             if (output is not null)
             {
-                streams.Add(Serve(output, copyId, stop.Token, pipe => Pump(pipe, Console.OpenStandardOutput())));
+                var source = capture?.NewSource();
+                streams.Add(Serve(output, copyId, stop.Token, pipe => Pump(pipe, Console.OpenStandardOutput(), source)));
             }
 
             if (error is not null)
             {
+                var source = capture?.NewSource();
                 streams.Add(Serve(error, copyId, stop.Token, pipe =>
                 {
                     errorConnected = true;
-                    Pump(pipe, Console.OpenStandardError());
+                    Pump(pipe, Console.OpenStandardError(), source);
                 }));
+            }
+
+            using var tray = capture is null ? null : Tray.Start(new TrayJob(options.Tail, DateTime.Now, null, options.Output,
+                sharedFile ? null : options.Error, capture, message =>
+                {
+                    Program.Report(options, message);
+                    capture.Note($"headless-run: {message}\n");
+                }));
+            if (tray is not null)
+            {
+                using ManualResetEvent exited = new(false)
+                {
+                    SafeWaitHandle = new SafeWaitHandle(copy.Handle, false)
+                };
+                if (WaitHandle.WaitAny([exited, tray.StopRequested]) == 1)
+                {
+                    // This launcher's exit is what ends the elevated copy, which then ends the whole tree:
+                    // an unelevated process cannot terminate it any other way.
+                    Program.Report(options, "Stopped from the tray; the elevated job is being terminated.");
+                    tray.Finish(Program.Stopped, true);
+                    return Program.Stopped;
+                }
             }
 
             copy.WaitForExit();
@@ -131,6 +161,7 @@ internal static class Elevation
                 throw new InvalidOperationException("The elevated launcher failed before it connected its error stream.");
             }
 
+            tray?.Finish(code, false);
             return code;
         }
     }
@@ -268,16 +299,36 @@ internal static class Elevation
         }
     }
 
-    private static void Pump(Stream source, Stream destination)
+    // capture: the --tray viewer's copy of the stream, if any.
+    private static void Pump(Stream source, Stream destination, OutputCapture.Source? capture)
     {
+        var buffer = new byte[PipeBufferBytes];
+        var forward = true;
         try
         {
-            source.CopyTo(destination);
-            destination.Flush();
+            int count;
+            while ((count = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (forward)
+                {
+                    try
+                    {
+                        destination.Write(buffer, 0, count);
+                        destination.Flush();
+                    }
+                    catch (IOException)
+                    {
+                        // The caller's stream went away; keep draining, so the viewer still gets the rest.
+                        forward = false;
+                    }
+                }
+
+                capture?.Write(buffer.AsSpan(0, count));
+            }
         }
         catch (IOException)
         {
-            // The other end closed: the child exited, or the caller's stream went away.
+            // The other end closed: the child exited.
         }
     }
 

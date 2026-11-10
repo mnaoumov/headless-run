@@ -27,6 +27,7 @@ internal sealed class Options
     public bool CreateDirectory;
     public bool WindowsPowerShell;
     public bool Elevate;
+    public bool Tray;
     public string? ElevatedRelay;
     public string Arguments = "";
     public uint PriorityClass;
@@ -95,6 +96,9 @@ internal sealed class Options
                 case "--elevate":
                     Elevate = true;
                     break;
+                case "--tray":
+                    Tray = true;
+                    break;
                 case "--elevated-relay":
                     ElevatedRelay = ReadValue(flag);
                     break;
@@ -146,6 +150,11 @@ internal sealed class Options
         if (Detach && Timeout != uint.MaxValue)
         {
             throw new ArgumentException("--detach cannot be combined with --timeout.");
+        }
+
+        if (Detach && Tray)
+        {
+            throw new ArgumentException("--detach cannot be combined with --tray: a detached launcher exits at once, so nothing is left to show the job.");
         }
 
         string ReadValue(string flag)

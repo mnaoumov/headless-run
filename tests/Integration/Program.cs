@@ -18,6 +18,32 @@ internal static class Program
     private const int JobObjectBasicLimitInformation = 2;
     private const uint JobObjectLimitPriorityClass = 0x20;
     private const string RelayWithoutUacVariable = "HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC";
+    private const int StoppedExitCode = 130;
+    private const string TrayWindowClass = "HeadlessRunTray";
+    private const string ViewerWindowClass = "HeadlessRunOutput";
+    private const int TrayCommandShowOutput = 1;
+    private const int TrayCommandHideOutput = 2;
+    private const int TrayCommandStop = 6;
+    private const int TrayCommandDismiss = 7;
+    private const int TrayLingerMilliseconds = 5000;
+    private const int LingerToleranceMilliseconds = 500;
+    private const int TrayTitleCharacters = 256;
+    private const uint WmCommand = 0x0111;
+    private const uint WmGetText = 0x000D;
+    private const uint WmGetTextLength = 0x000E;
+    [DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
+    private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+    [DllImport("user32.dll", EntryPoint = "GetWindowTextW", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(nint window, char[] text, int capacity);
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern nint SendMessage(nint window, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
+    private static extern nint SendMessage(nint window, uint message, nint wParam, char[] lParam);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint window);
     [DllImport("kernel32.dll")]
     private static extern nint GetConsoleWindow();
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -223,7 +249,7 @@ internal static class Program
             });
             Test("launch and usage failures produce diagnostics", () =>
             {
-                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0" })
+                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--tray --detach -- x", "--tray=yes -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0" })
                 {
                     var run = Run(launcher, command);
                     Assert(run.Code == LaunchFailureExitCode && run.Error.Contains("headless-run:"), "missing failure: " + command);
@@ -312,6 +338,113 @@ internal static class Program
                 var run = Run(launcher, "--elevate -- " + Quote(Self) + " child echo 5", input: "x");
                 Assert(run.Code == 5 && run.Output == "x", "elevated no-op: " + run.Error);
             });
+            Test("--tray: Stop from the menu ends the tree with 130", () =>
+            {
+                var marker = Path.Combine(root, "tray-stop.pids");
+                using var process = Start(launcher, "--tray -- " + Quote(Self) + " child tree " + Quote(marker) + " tray");
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                WaitFor(() => File.Exists(marker) && File.ReadAllText(marker).Contains(','), "tree not ready");
+                var pids = File.ReadAllText(marker).Split(',').Select(int.Parse).ToArray();
+                var tray = TrayWindow(process.Id);
+                Assert(Title(tray) == "headless-run: running", "tray state: " + Title(tray));
+                SendMessage(tray, WmCommand, TrayCommandStop, 0);
+                Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "launcher did not exit after Stop");
+                Assert(process.ExitCode == StoppedExitCode, "stop exit code " + process.ExitCode);
+                Assert(error.GetAwaiter().GetResult().Contains("Stopped from the tray"), "stop diagnostic");
+                output.GetAwaiter().GetResult();
+                foreach (var pid in pids)
+                {
+                    WaitFor(() => !Alive(pid), "surviving descendant " + pid);
+                }
+            });
+            Test("--tray: the viewer shows teed output, and inherited streams still get it", () =>
+            {
+                var marker = Path.Combine(root, "tray-chatty.txt");
+                using var process = Start(launcher, "--tray -- " + Quote(Self) + " child chatty " + Quote(marker));
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                WaitFor(() => File.Exists(marker), "chatty child not ready");
+                var tray = TrayWindow(process.Id);
+                var viewer = OwnedWindow(ViewerWindowClass, process.Id);
+                Assert(!IsWindowVisible(viewer), "viewer visible before Show");
+                SendMessage(tray, WmCommand, TrayCommandShowOutput, 0);
+                Assert(IsWindowVisible(viewer), "viewer hidden after Show");
+                WaitFor(() =>
+                {
+                    SendMessage(tray, WmCommand, TrayCommandShowOutput, 0);
+                    var text = ViewerText(viewer);
+                    return text.Contains("chatty stdout") && text.Contains("chatty stderr");
+                }, "viewer text: " + ViewerText(viewer));
+                SendMessage(tray, WmCommand, TrayCommandHideOutput, 0);
+                Assert(!IsWindowVisible(viewer), "viewer visible after Hide");
+                SendMessage(tray, WmCommand, TrayCommandStop, 0);
+                Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "launcher did not exit after Stop");
+                Assert(output.GetAwaiter().GetResult() == "chatty stdout\n", "teed stdout: " + output.Result);
+                Assert(error.GetAwaiter().GetResult().StartsWith("chatty stderr\n", StringComparison.Ordinal), "teed stderr: " + error.Result);
+            });
+            Test("--tray: log files are tailed, and the finish keeps the exit code until Dismiss", () =>
+            {
+                var output = Path.Combine(root, "tray-stdout.txt");
+                var error = Path.Combine(root, "tray-stderr.txt");
+                File.WriteAllText(output, "earlier run\n");
+                using var process = Start(launcher, "--tray --append --stdout " + Quote(output) + " --stderr " + Quote(error) + " -- " + Quote(Self) + " child echo 7", input: "from stdin\n");
+                var tray = TrayWindow(process.Id);
+                WaitFor(() => Title(tray) == "headless-run: exited 7", "finish state: " + Title(tray));
+                var viewer = OwnedWindow(ViewerWindowClass, process.Id);
+                SendMessage(tray, WmCommand, TrayCommandShowOutput, 0);
+                var text = ViewerText(viewer);
+                Assert(text.Contains("from stdin") && text.Contains("stderr") && !text.Contains("earlier run"), "tailed logs: " + text);
+                var clock = Stopwatch.StartNew();
+                SendMessage(tray, WmCommand, TrayCommandDismiss, 0);
+                Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "launcher did not exit after Dismiss");
+                Assert(clock.ElapsedMilliseconds < TrayLingerMilliseconds, "Dismiss waited for the linger");
+                Assert(process.ExitCode == 7, "finished exit code " + process.ExitCode);
+            });
+            Test("--tray: a timeout still returns 124, after the icon lingers", () =>
+            {
+                var clock = Stopwatch.StartNew();
+                var run = Run(launcher, "--tray --timeout 300ms -- " + Quote(Self) + " child sleep");
+                Assert(run.Code == TimeoutExitCode && run.Error.Contains("Timeout expired"), "tray timeout: " + run.Code + " " + run.Error);
+                Assert(clock.ElapsedMilliseconds >= TrayLingerMilliseconds - LingerToleranceMilliseconds, "no linger: " + clock.ElapsedMilliseconds + " ms");
+            });
+            Test("--elevate --tray: the caller hosts the icon, and Stop ends the elevated tree", () =>
+            {
+                var marker = Path.Combine(root, "tray-elevated.pids");
+                using var process = Start(launcher, "--elevate --tray -- " + Quote(Self) + " child tree " + Quote(marker) + " tray", relay: true);
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                WaitFor(() => File.Exists(marker) && File.ReadAllText(marker).Contains(','), "tree not ready");
+                var pids = File.ReadAllText(marker).Split(',').Select(int.Parse).ToArray();
+                var copies = LauncherProcesses().Where(id => id != process.Id).ToArray();
+                Assert(copies.Length == 1, "expected one relaying launcher copy, found " + copies.Length);
+                var tray = TrayWindow(process.Id);
+                Assert(FindOwnedWindow(TrayWindowClass, copies[0]) == 0, "the elevated copy shows a second icon");
+                SendMessage(tray, WmCommand, TrayCommandStop, 0);
+                Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "caller did not exit after Stop");
+                Assert(process.ExitCode == StoppedExitCode, "elevated stop exit code " + process.ExitCode);
+                output.GetAwaiter().GetResult();
+                Assert(error.GetAwaiter().GetResult().Contains("Stopped from the tray"), "elevated stop diagnostic");
+                foreach (var pid in pids.Concat(copies))
+                {
+                    WaitFor(() => !Alive(pid), "surviving process " + pid);
+                }
+            });
+            Test("--elevate --tray: relayed streams reach the viewer and the caller", () =>
+            {
+                using var process = Start(launcher, "--elevate --tray -- " + Quote(Self) + " child echo 5", relay: true, input: "relayed line\n");
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                var tray = TrayWindow(process.Id);
+                WaitFor(() => Title(tray) == "headless-run: exited 5", "elevated finish state: " + Title(tray));
+                var viewer = OwnedWindow(ViewerWindowClass, process.Id);
+                SendMessage(tray, WmCommand, TrayCommandShowOutput, 0);
+                var text = ViewerText(viewer);
+                Assert(text.Contains("relayed line") && text.Contains("stderr"), "elevated viewer: " + text);
+                SendMessage(tray, WmCommand, TrayCommandDismiss, 0);
+                Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "caller did not exit after Dismiss");
+                Assert(process.ExitCode == 5 && output.GetAwaiter().GetResult() == "relayed line\n", "elevated tray relay: " + process.ExitCode + " " + error.GetAwaiter().GetResult());
+            });
             Console.WriteLine($"PASS: {passed} integration groups");
             return 0;
         }
@@ -381,6 +514,14 @@ internal static class Program
                 }
                 return 0;
             case "sleep":
+                Thread.Sleep(ChildSleepMilliseconds);
+                return 0;
+            case "chatty":
+                Console.Out.Write("chatty stdout\n");
+                Console.Out.Flush();
+                Console.Error.Write("chatty stderr\n");
+                Console.Error.Flush();
+                PublishMarker(args[1], "ready");
                 Thread.Sleep(ChildSleepMilliseconds);
                 return 0;
             case "later":
@@ -502,6 +643,50 @@ internal static class Program
             }
         }
         return [.. ids];
+    }
+
+    // The launcher's hidden tray window: its title carries the job's state, and WM_COMMAND drives its menu.
+    private static nint TrayWindow(int processId)
+    {
+        return OwnedWindow(TrayWindowClass, processId);
+    }
+
+    private static nint OwnedWindow(string className, int processId)
+    {
+        nint found = 0;
+        WaitFor(() => (found = FindOwnedWindow(className, processId)) != 0, className + " window of " + processId + " not found");
+        return found;
+    }
+
+    private static nint FindOwnedWindow(string className, int processId)
+    {
+        nint window = 0;
+        while ((window = FindWindowEx(0, window, className, null)) != 0)
+        {
+            GetWindowThreadProcessId(window, out var owner);
+            if (owner == processId)
+            {
+                return window;
+            }
+        }
+
+        return 0;
+    }
+
+    private static string Title(nint window)
+    {
+        var buffer = new char[TrayTitleCharacters];
+        var length = GetWindowText(window, buffer, buffer.Length);
+        return new string(buffer, 0, length);
+    }
+
+    private static string ViewerText(nint viewer)
+    {
+        var edit = FindWindowEx(viewer, 0, "Edit", null);
+        var length = (int) SendMessage(edit, WmGetTextLength, 0, 0);
+        var buffer = new char[length + 1];
+        var copied = (int) SendMessage(edit, WmGetText, buffer.Length, buffer);
+        return new string(buffer, 0, copied);
     }
 
     private static bool Alive(int pid)

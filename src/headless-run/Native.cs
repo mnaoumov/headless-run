@@ -41,7 +41,6 @@ internal static class Native
     internal const uint FileAttributeNormal = 0x80;
     private const string Advapi32Library = "advapi32.dll";
     private const string User32Library = "user32.dll";
-    internal const uint WaitObjectSecondSignaled = 1;
     internal const uint Synchronize = 0x00100000;
     internal const uint TokenQuery = 0x0008;
     internal const int TokenElevationClass = 20;
