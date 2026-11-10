@@ -21,8 +21,8 @@ jobs:
     env:
       DOTNET_PROCESSOR_COUNT: 2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Verify tag and source version
@@ -44,7 +44,7 @@ jobs:
           Copy-Item artifacts/${{ matrix.rid }}/headless-run.exe release/$name
           $hash = (Get-FileHash release/$name -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText("$PWD/release/$name.sha256", "$hash  $name`n")
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.rid }}
           path: release/*
@@ -55,11 +55,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release
           merge-multiple: true
