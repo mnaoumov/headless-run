@@ -25,3 +25,9 @@ jobs:
       - name: Test native executable
         shell: pwsh
         run: ./scripts/test.ps1 -Launcher ./artifacts/win-x64/headless-run.exe
+      - name: Publish NativeAOT x86
+        shell: pwsh
+        run: dotnet publish src/headless-run -c Release -r win-x86 -p:PublishAot=true -o artifacts/win-x86 -m:2
+      - name: Test native x86 executable
+        shell: pwsh
+        run: ./scripts/test.ps1 -Launcher ./artifacts/win-x86/headless-run.exe
