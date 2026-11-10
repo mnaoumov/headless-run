@@ -80,6 +80,19 @@ Use `win-arm64` on an ARM64 machine. CI builds and tests NativeAOT. Pushing a `v
 
 The implementation uses [`CreateProcessW`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw), [`CREATE_NO_WINDOW`](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags), [`PROC_THREAD_ATTRIBUTE_JOB_LIST` and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute), and [`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information). Job assignment happens inside process creation, avoiding a suspended process orphaned between creation and assignment. Only intended standard handles are inherited; the job handle stays owned by the launcher.
 
+## See also
+
+| Tool | Features | How `headless-run` differs |
+| --- | --- | --- |
+| [`Hidden Start`](https://www.ntwind.com/software/hstart.html) | Runs console programs and batch files with no window; tray, minimised and maximised modes; start delay; idle priority; starting directory; elevation without a UAC prompt; commercial | Same goal as `Hidden Start`; omits: tray and window modes, delay, elevation; adds: built-in output files, timeout, process-tree cleanup; open source |
+| [`HiddenRun`](https://github.com/unt-cas/hiddenrun) | VBScript run through Windows Script Host; runs a command hidden; logs start and exit code to the Application event log | Same goal as `HiddenRun`; a native executable rather than a script; returns the child's exit code to the caller rather than logging it |
+| [`quietrun`](https://github.com/dltkdrms1717-create/quietrun) | Runs Task Scheduler Python jobs under `pythonw.exe` with `CREATE_NO_WINDOW`; appends output to a log; returns the job's exit code; sweeps orphaned Selenium drivers | Same goal as `quietrun`, for any console program rather than Python jobs; omits: driver sweep; adds: separate output files, timeout, environment, priority, job-based process-tree cleanup |
+| [`RunHidden`](https://github.com/LesFerch/RunHidden) | Runs scripts and console programs with the console suppressed; separate `RunHiddenWait.exe` waits and returns the exit code | Same goal as `RunHidden`; one executable that always waits unless detached; adds: output files, timeout, process-tree cleanup |
+| [`RunHiddenConsole`](https://github.com/SeidChr/RunHiddenConsole) | Forwards calls to a target program started without a window; file redirection listed as future work | Same goal as `RunHiddenConsole`; adds: output files, timeout, process-tree cleanup |
+| [`SilentCMD`](https://github.com/stbrenner/SilentCMD) | Runs a batch file without a command prompt window; log file with overwrite, append and size options; start delay | Broader than `SilentCMD`: any console program, not only batch files; omits: log size limit, delay; adds: separate stdout and stderr files, timeout, process-tree cleanup |
+
+Last searched for similar tools on 2026-11-10.
+
 ## License
 
 [MIT](LICENSE).
