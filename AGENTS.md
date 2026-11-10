@@ -1,6 +1,6 @@
 # headless-run development
 
-`headless-run` is a Windows-subsystem launcher built with C# and .NET 10. It forwards the raw child command line through documented Win32 APIs. Keep the child tail opaque: only launcher options before `--` may be parsed.
+`headless-run` is a Windows-subsystem launcher built with C# and .NET 10. It forwards the raw child command line through documented Win32 APIs. Keep the child tail opaque: only launcher options before `--` may be parsed. The one read of the tail is the program token's extension, which picks the host: a native executable gets the tail unchanged, `.cmd`/`.bat` get it wrapped as `cmd.exe /d /s /c "<tail>"`, and `.ps1` gets it appended to `pwsh -NoProfile -NonInteractive -File`. Never re-quote or split the tail for any host.
 
 ## L1. C# coding standards
 
@@ -24,4 +24,6 @@ Run `dotnet publish src/headless-run -c Release -r win-x64 -p:PublishAot=true -o
 
 ## Delivery
 
-The default branch is `main`. CI tests both JIT and native x64 builds. Update the project version, `--help`/`--version` text and version assertion together. In the same release commit, before tagging, add the version's dated entry at the top of `CHANGELOG.md`; the release workflow does not write it. Push a matching `vX.Y.Z` tag to publish a release. The release workflow tests native x64 and ARM64 executables before publishing them with SHA-256 files. Download the released executable and verify its checksum and integration suite before calling the release delivered.
+The default branch is `main`. CI tests both JIT and native x64 builds. Update the project version, `--help`/`--version` text and version assertion together. In the same release commit, before tagging, add the version's dated entry at the top of `CHANGELOG.md`; the release workflow does not write it. Push a matching `vX.Y.Z` tag to publish a release. The release workflow tests native x64, x86 and ARM64 executables before publishing them with SHA-256 files. Download the released executables and verify their checksums and integration suite before calling the release delivered. Then update `bucket/headless-run.json` in the `mnaoumov/scoop-bucket` repo: version, and the URL and hash for each of `64bit`, `32bit` and `arm64`.
+
+When the tests run inside a job object with a priority-class limit, as some automation hosts impose, every `--priority` value yields that class. The integration test detects the limit and expects the imposed class; CI has no limit and checks every class.
