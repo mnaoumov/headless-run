@@ -93,6 +93,10 @@ The implementation uses [`CreateProcessW`](https://learn.microsoft.com/en-us/win
 
 Last searched for similar tools on 2026-11-10.
 
+## Changelog
+
+All notable changes to this project will be documented in the [CHANGELOG](./CHANGELOG.md).
+
 ## License
 
 [MIT](LICENSE).

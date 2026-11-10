@@ -24,4 +24,4 @@ Run `dotnet publish src/headless-run -c Release -r win-x64 -p:PublishAot=true -o
 
 ## Delivery
 
-The default branch is `main`. CI tests both JIT and native x64 builds. Update the project version, `--help`/`--version` text and version assertion together. Push a matching `vX.Y.Z` tag to publish a release. The release workflow tests native x64 and ARM64 executables before publishing them with SHA-256 files. Download the released executable and verify its checksum and integration suite before calling the release delivered.
+The default branch is `main`. CI tests both JIT and native x64 builds. Update the project version, `--help`/`--version` text and version assertion together. In the same release commit, before tagging, add the version's dated entry at the top of `CHANGELOG.md`; the release workflow does not write it. Push a matching `vX.Y.Z` tag to publish a release. The release workflow tests native x64 and ARM64 executables before publishing them with SHA-256 files. Download the released executable and verify its checksum and integration suite before calling the release delivered.
