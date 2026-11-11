@@ -135,6 +135,7 @@ internal static class Elevation
                     // an unelevated process cannot terminate it any other way.
                     Program.Report(options, "Stopped from the tray; the elevated job is being terminated.");
                     tray.Finish(Program.Stopped, true);
+                    JobEventLog.Record(JobEventLog.Outcome.Stopped);
                     return Program.Stopped;
                 }
             }
@@ -162,6 +163,8 @@ internal static class Elevation
             }
 
             tray?.Finish(code, false);
+            // The elevated copy recorded this outcome itself, knowing a timeout from a child's 124.
+            JobEventLog.Relayed = true;
             return code;
         }
     }

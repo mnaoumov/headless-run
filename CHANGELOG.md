@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### New
 
 - `--tray` shows a notification-area icon while the job runs. Its menu shows the command line, start time and process id, shows or hides a window with the job's output, opens the `--stdout` and `--stderr` files, and stops the job, which then returns 130. When the job ends, a notification shows the exit code. It works with `--timeout` and `--elevate`; `--detach` refuses it.
+- `--event-log` writes one event per run to the Windows Application log, under the source `headless-run`: the outcome (exit code, timeout, tray stop, launcher failure with its diagnostic, or detached start) with its own event id, the command line, working directory and duration. A failed scheduled run is then visible in Event Viewer with no log file. Writing it never fails the job.
 
 ## 1.0.0 - 2026-11-10
 

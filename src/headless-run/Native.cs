@@ -136,6 +136,14 @@ internal static class Native
     [DllImport(Kernel32Library)]
 
     internal static extern nint GetCommandLineW();
+    [DllImport(Advapi32Library, EntryPoint = "RegisterEventSourceW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint RegisterEventSource(string? server, string source);
+    [DllImport(Advapi32Library, EntryPoint = "ReportEventW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ReportEvent(nint eventLog, ushort type, ushort category, uint eventId, nint userSid, ushort stringCount, uint dataSize, nint[] strings, nint data);
+    [DllImport(Advapi32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DeregisterEventSource(nint eventLog);
     [DllImport(Kernel32Library, SetLastError = true)]
     internal static extern nint GetStdHandle(int kind);
     [DllImport(Kernel32Library)]

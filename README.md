@@ -53,8 +53,9 @@ All launcher options precede `--`. Values use Windows double-quote/backslash rul
 11. `--windows-powershell`: run a `.ps1` program under Windows PowerShell 5.1 (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`) instead of `pwsh`. Any other program with this option is a launcher failure.
 12. `--elevate`: run the child elevated, as an administrator. See [Elevation](#elevation).
 13. `--tray`: show a notification-area icon while the job runs, to view its output, open its logs or stop it. See [Tray icon](#tray-icon).
-14. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
-15. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
+14. `--event-log`: write the run's outcome to the Windows Application event log. See [Event log](#event-log).
+15. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
+16. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
 
 Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; the tool does not rotate logs.
 
@@ -115,6 +116,31 @@ With other options:
 3. `--elevate`: the unelevated caller shows the icon and the output, since every relayed byte passes through it. **Stop** ends the caller with 130, and the elevated copy then terminates the tree, as it does when the caller is killed. The menu shows no process id, because the caller cannot see inside the elevated job.
 4. Without a notification area, as in a service or session 0, the launcher writes a diagnostic and the job runs on without the icon.
 
+## Event log
+
+`--event-log` is opt-in. It writes one event per run to the Application log, under the source `headless-run`, when the run ends, so a failed scheduled run shows in Event Viewer without a `--stderr` file. Task Scheduler's own history records only the exit code; this event also says whether 124, 125 or 130 came from the launcher or from the child, and carries the launcher's diagnostic.
+
+| Event id | Level | Outcome |
+| --- | --- | --- |
+| 1 | Information | The child exited with code 0. |
+| 2 | Warning | The child exited with a nonzero code. |
+| 3 | Error | The timeout expired and the job was terminated (124). |
+| 4 | Warning | The job was stopped from the `--tray` menu (130). |
+| 5 | Error | Launcher failure (125), with the diagnostic. |
+| 6 | Information | A `--detach` child started. |
+
+The text also holds the command line, the working directory, the start time, the duration and the launcher's process id. The child's output is never written to the log. There is no start event for a waited run: Task Scheduler already records starts, and one event per run keeps a frequent job from flooding the log.
+
+Register the source once, from an elevated Windows PowerShell 5.1 (`New-EventLog` is not in PowerShell 7):
+
+```powershell
+New-EventLog -LogName Application -Source headless-run
+```
+
+Unregistered, the events are still written under that source name, but Event Viewer prefixes each with "The description for Event ID ... cannot be found" before showing the text. A run that cannot write its event, for any reason, carries on and returns its usual exit code.
+
+Under `--elevate`, the elevated copy writes the event, since it alone tells a timeout from a child's own 124; the unelevated caller writes one only for what happens on its side, such as a declined prompt or a tray stop. Read the events with `Get-WinEvent -LogName Application -FilterXPath "*[System[Provider[@Name='headless-run']]]"`, which works whether or not the source is registered; a `ProviderName` filter finds them only once it is.
+
 ## Build and test
 
 Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) on Windows, then run:
@@ -123,7 +149,7 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) on 
 pwsh -NoProfile -File scripts/test.ps1
 ```
 
-The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.cmd`/`.bat`/`.ps1` dispatch and their argument rules, console visibility, failures, timeout, descendant cleanup, launcher termination, detach, and the `--tray` menu, output window, finish linger and stop, driven through the launcher's hidden tray window. `--elevate` is tested through its full relay. A test-only variable, `HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC=1`, starts the copy without the `runas` verb, so no prompt appears. An elevated test run, such as CI, also checks that the option does nothing there. Answering a real UAC prompt needs a person.
+The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.cmd`/`.bat`/`.ps1` dispatch and their argument rules, console visibility, failures, timeout, descendant cleanup, launcher termination, detach, and the `--tray` menu, output window, finish linger and stop, driven through the launcher's hidden tray window, and the `--event-log` event for each outcome, read back from the Application log. `--elevate` is tested through its full relay. A test-only variable, `HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC=1`, starts the copy without the `runas` verb, so no prompt appears. An elevated test run, such as CI, also checks that the option does nothing there. Answering a real UAC prompt needs a person.
 
 For a runtime-free executable, install the [NativeAOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) and run:
 
@@ -143,7 +169,7 @@ The implementation uses [`CreateProcessW`](https://learn.microsoft.com/en-us/win
 | Tool | Features | How `headless-run` differs |
 | --- | --- | --- |
 | [`Hidden Start`](https://www.ntwind.com/software/hstart.html) | Runs console programs and batch files with no window; tray, minimised and maximised modes; start delay; idle priority; starting directory; elevation without a UAC prompt; commercial | Same goal as `Hidden Start`; omits: minimised and maximised window modes, delay, elevation without a UAC prompt; adds: built-in output files, timeout, process-tree cleanup, an output window in its tray menu; open source |
-| [`HiddenRun`](https://github.com/unt-cas/hiddenrun) | VBScript run through Windows Script Host; runs a command hidden; logs start and exit code to the Application event log | Same goal as `HiddenRun`; a native executable rather than a script; returns the child's exit code to the caller rather than logging it |
+| [`HiddenRun`](https://github.com/unt-cas/hiddenrun) | VBScript run through Windows Script Host; runs a command hidden; logs start and exit code to the Application event log | Same goal as `HiddenRun`; a native executable rather than a script; returns the child's exit code to the caller, and logs the outcome to the event log only with `--event-log` |
 | [`quietrun`](https://github.com/dltkdrms1717-create/quietrun) | Runs Task Scheduler Python jobs under `pythonw.exe` with `CREATE_NO_WINDOW`; appends output to a log; returns the job's exit code; sweeps orphaned Selenium drivers | Same goal as `quietrun`, for any console program rather than Python jobs; omits: driver sweep; adds: separate output files, timeout, environment, priority, job-based process-tree cleanup |
 | [`RunHidden`](https://github.com/LesFerch/RunHidden) | Runs scripts and console programs with the console suppressed; separate `RunHiddenWait.exe` waits and returns the exit code | Same goal as `RunHidden`; one executable that always waits unless detached; adds: output files, timeout, process-tree cleanup |
 | [`RunHiddenConsole`](https://github.com/SeidChr/RunHiddenConsole) | Forwards calls to a target program started without a window; file redirection listed as future work | Same goal as `RunHiddenConsole`; adds: output files, timeout, process-tree cleanup |
