@@ -52,8 +52,9 @@ All launcher options precede `--`. Values use Windows double-quote/backslash rul
 10. `--detach`: return 0 after successful process creation, without creating a launcher-owned job. Cannot combine with `--timeout`. The child can outlive the launcher; an enclosing job imposed by the caller still applies. Redirect output to files for unattended use: inherited pipes remain open in the child and may keep the caller waiting for EOF.
 11. `--windows-powershell`: run a `.ps1` program under Windows PowerShell 5.1 (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`) instead of `pwsh`. Any other program with this option is a launcher failure.
 12. `--elevate`: run the child elevated, as an administrator. See [Elevation](#elevation).
-13. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
-14. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
+13. `--tray`: show a notification-area icon while the job runs, to view its output, open its logs or stop it. See [Tray icon](#tray-icon).
+14. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
+15. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
 
 Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; the tool does not rotate logs.
 
@@ -62,9 +63,10 @@ Unredirected standard handles are inherited when available and otherwise connect
 1. Normal completion returns the direct child's full 32-bit exit code, including nonzero codes and Windows exception codes.
 2. `124` means the timeout expired; the job tree was terminated.
 3. `125` means invalid options or a launcher failure, such as a missing program, inaccessible file, invalid directory or failed Win32 call. A diagnostic goes to stderr or the configured error file. Without an inherited error handle or `--stderr`, a GUI-subsystem process has nowhere visible to display it.
-4. `0` means successful detached startup, help or version output.
+4. `130` means the job was stopped from the `--tray` menu; the job tree was terminated.
+5. `0` means successful detached startup, help or version output.
 
-A child can itself return 124 or 125; these codes cannot be distinguished from launcher statuses by exit code alone. Read the diagnostic stream when that distinction matters.
+A child can itself return 124, 125 or 130; these codes cannot be distinguished from launcher statuses by exit code alone. Read the diagnostic stream when that distinction matters.
 
 By default the launcher waits for the direct child. A kill-on-close job contains it and its descendants from process creation. When that child exits, any remaining descendants are terminated. Terminating the launcher also closes the job and kills that tree. Use `--detach` for applications that intentionally leave descendants running. No graceful shutdown signal is sent on timeout. Existing parent-job restrictions can prevent startup; such failures are reported rather than silently bypassing containment.
 
@@ -88,6 +90,31 @@ Caveats:
 
 `--elevated-relay` is internal: the elevated copy receives it. Do not pass it yourself.
 
+## Tray icon
+
+`--tray` is opt-in, so an unattended scheduled task stays invisible by default. While the launcher waits on its job, it shows one icon of its own in the notification area, with the command line as its tooltip; several jobs show several icons. Right-click it for the menu:
+
+1. The command line, the start time and the child's process id.
+2. **Show output** / **Hide output**: a read-only window with the job's output, also toggled by double-clicking the icon. Closing that window only hides it; the job keeps running.
+3. **Open stdout log** / **Open stderr log**: open a `--stdout` or `--stderr` file in its default application.
+4. **Stop**: terminate the whole job tree. The launcher returns 130 and writes a diagnostic to stderr.
+
+When the job ends, the icon changes, a notification shows the exit code, and the icon stays for 5 seconds with the code in its menu and a **Dismiss** item that ends the wait at once. Only `--tray` runs pay those seconds; the exit code is the child's, as without the option. A job stopped from the menu ends at once.
+
+The output window shows the last 256K characters of both streams together, decoded as UTF-8:
+
+1. A stream redirected to a file is followed from that file. With `--append`, only what this run adds is shown.
+2. Any other stream goes through a pipe that the launcher copies to wherever the stream would otherwise have gone, so the caller still receives every byte, and to the window. When stdout and stderr share one destination, their relative order there can differ from a run without `--tray`, since each passes through its own pipe. A stream with nowhere to go, such as the output of a launcher started from a shortcut, is still shown in the window.
+
+The child still runs with `CREATE_NO_WINDOW`. Starting it with a hidden console to reveal later was rejected: a console shows nothing of redirected streams, which is how `headless-run` is normally used, and closing it would kill the job.
+
+With other options:
+
+1. `--timeout` works unchanged; the icon shows the timeout, and 124 is returned after the 5 seconds.
+2. `--detach` cannot combine with `--tray`: a detached launcher exits at once, so nothing is left to show the job. The combination is a launcher failure (125).
+3. `--elevate`: the unelevated caller shows the icon and the output, since every relayed byte passes through it. **Stop** ends the caller with 130, and the elevated copy then terminates the tree, as it does when the caller is killed. The menu shows no process id, because the caller cannot see inside the elevated job.
+4. Without a notification area, as in a service or session 0, the launcher writes a diagnostic and the job runs on without the icon.
+
 ## Build and test
 
 Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) on Windows, then run:
@@ -96,7 +123,7 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) on 
 pwsh -NoProfile -File scripts/test.ps1
 ```
 
-The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.cmd`/`.bat`/`.ps1` dispatch and their argument rules, console visibility, failures, timeout, descendant cleanup, launcher termination and detach. `--elevate` is tested through its full relay. A test-only variable, `HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC=1`, starts the copy without the `runas` verb, so no prompt appears. An elevated test run, such as CI, also checks that the option does nothing there. Answering a real UAC prompt needs a person.
+The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.cmd`/`.bat`/`.ps1` dispatch and their argument rules, console visibility, failures, timeout, descendant cleanup, launcher termination, detach, and the `--tray` menu, output window, finish linger and stop, driven through the launcher's hidden tray window. `--elevate` is tested through its full relay. A test-only variable, `HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC=1`, starts the copy without the `runas` verb, so no prompt appears. An elevated test run, such as CI, also checks that the option does nothing there. Answering a real UAC prompt needs a person.
 
 For a runtime-free executable, install the [NativeAOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) and run:
 
@@ -115,7 +142,7 @@ The implementation uses [`CreateProcessW`](https://learn.microsoft.com/en-us/win
 
 | Tool | Features | How `headless-run` differs |
 | --- | --- | --- |
-| [`Hidden Start`](https://www.ntwind.com/software/hstart.html) | Runs console programs and batch files with no window; tray, minimised and maximised modes; start delay; idle priority; starting directory; elevation without a UAC prompt; commercial | Same goal as `Hidden Start`; omits: tray and window modes, delay, elevation without a UAC prompt; adds: built-in output files, timeout, process-tree cleanup; open source |
+| [`Hidden Start`](https://www.ntwind.com/software/hstart.html) | Runs console programs and batch files with no window; tray, minimised and maximised modes; start delay; idle priority; starting directory; elevation without a UAC prompt; commercial | Same goal as `Hidden Start`; omits: minimised and maximised window modes, delay, elevation without a UAC prompt; adds: built-in output files, timeout, process-tree cleanup, an output window in its tray menu; open source |
 | [`HiddenRun`](https://github.com/unt-cas/hiddenrun) | VBScript run through Windows Script Host; runs a command hidden; logs start and exit code to the Application event log | Same goal as `HiddenRun`; a native executable rather than a script; returns the child's exit code to the caller rather than logging it |
 | [`quietrun`](https://github.com/dltkdrms1717-create/quietrun) | Runs Task Scheduler Python jobs under `pythonw.exe` with `CREATE_NO_WINDOW`; appends output to a log; returns the job's exit code; sweeps orphaned Selenium drivers | Same goal as `quietrun`, for any console program rather than Python jobs; omits: driver sweep; adds: separate output files, timeout, environment, priority, job-based process-tree cleanup |
 | [`RunHidden`](https://github.com/LesFerch/RunHidden) | Runs scripts and console programs with the console suppressed; separate `RunHiddenWait.exe` waits and returns the exit code | Same goal as `RunHidden`; one executable that always waits unless detached; adds: output files, timeout, process-tree cleanup |

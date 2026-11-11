@@ -9,6 +9,9 @@ internal static class Program
 {
     internal const int LaunchFailure = 125;
     internal const int TimedOut = 124;
+    // Stopped from the --tray menu: the shell's code for a job the user interrupted.
+    internal const int Stopped = 130;
+    private const int TeeDrainMilliseconds = 5000;
 
     private static int Main()
     {
@@ -64,11 +67,28 @@ internal static class Program
 
         var (application, commandLine) = ResolveCommand(options);
         PrepareWorkingDirectory(options);
+        // Under --elevate the unelevated caller hosts the icon, so the elevated copy never shows a second one.
+        var capture = options.Tray && caller == 0 ? new OutputCapture() : null;
+        var sharedFile = SharesFile(options);
+        capture?.FollowLogs(options, sharedFile);
         var input = StandardHandle(Native.StandardInputHandle, null, false, true, resources);
         var output = StandardHandle(Native.StandardOutputHandle, options.Output, options.Append, false, resources);
-        var error = options.Error is not null && options.Output is not null &&
-            string.Equals(Path.GetFullPath(options.Error), Path.GetFullPath(options.Output), StringComparison.OrdinalIgnoreCase)
-            ? output : StandardHandle(Native.StandardErrorHandle, options.Error, options.Append, false, resources);
+        var error = sharedFile ? output : StandardHandle(Native.StandardErrorHandle, options.Error, options.Append, false, resources);
+        // Launcher diagnostics go where the child's stderr would have gone, never into a tee's pipe.
+        var diagnostics = error;
+        // A tee forwards to the handle the child would otherwise have had, NUL included.
+        using var outputTee = options.Output is null && capture is not null ? new Tee(output, capture.NewSource()) : null;
+        using var errorTee = options.Error is null && capture is not null ? new Tee(error, capture.NewSource()) : null;
+        if (outputTee is not null)
+        {
+            output = outputTee.ChildHandle;
+        }
+
+        if (errorTee is not null)
+        {
+            error = errorTee.ChildHandle;
+        }
+
         nint job = 0;
         if (!options.Detach)
         {
@@ -138,27 +158,70 @@ internal static class Program
                 return 0;
             }
 
-            var wait = caller == 0
-                ? Native.WaitForSingleObject(process.Process, options.Timeout)
-                : Native.WaitForMultipleObjects(2, [process.Process, caller], false, options.Timeout);
-            if (wait == Native.WaitObjectSecondSignaled)
+            outputTee?.Start();
+            errorTee?.Start();
+            using var tray = capture is null ? null : Tray.Start(new TrayJob(options.Tail, DateTime.Now, process.ProcessId,
+                options.Output, sharedFile ? null : options.Error, capture, message => Diagnose(diagnostics, capture, message)));
+            List<nint> waits = [process.Process];
+            var callerIndex = -1;
+            var stopIndex = -1;
+            if (caller != 0)
+            {
+                callerIndex = waits.Count;
+                waits.Add(caller);
+            }
+
+            if (tray is not null)
+            {
+                stopIndex = waits.Count;
+                waits.Add(tray.StopHandle);
+            }
+
+            var wait = Native.WaitForMultipleObjects((uint) waits.Count, [.. waits], false, options.Timeout);
+            int code;
+            var stopped = false;
+            if (callerIndex >= 0 && wait == Native.WaitObjectSignaled + (uint) callerIndex)
             {
                 // The caller is gone, so nobody is left to relay to: end the tree as its own kill would have.
                 Check(Native.TerminateJobObject(job, LaunchFailure));
                 return LaunchFailure;
             }
 
-            if (wait == Native.WaitTimeout)
+            if (stopIndex >= 0 && wait == Native.WaitObjectSignaled + (uint) stopIndex)
             {
-                Check(Native.TerminateJobObject(job, TimedOut));
-                Check(Native.WaitForSingleObject(process.Process, Native.InfiniteWait) == Native.WaitObjectSignaled);
-                var diagnostic = Encoding.UTF8.GetBytes("headless-run: Timeout expired; the child job was terminated.\n");
-                Native.WriteFile(error, diagnostic, (uint) diagnostic.Length, out _, 0);
-                return TimedOut;
+                stopped = true;
+                code = End(Stopped, "Stopped from the tray; the child job was terminated.");
             }
-            Check(wait == Native.WaitObjectSignaled);
-            Check(Native.GetExitCodeProcess(process.Process, out var code));
-            return unchecked((int) code);
+            else if (wait == Native.WaitTimeout)
+            {
+                code = End(TimedOut, "Timeout expired; the child job was terminated.");
+            }
+            else
+            {
+                Check(wait == Native.WaitObjectSignaled);
+                Check(Native.GetExitCodeProcess(process.Process, out var exit));
+                code = unchecked((int) exit);
+            }
+
+            if (tray is not null)
+            {
+                // The tees end once no process holds their pipes, so end the descendants first, as the
+                // job's close would have, and let the viewer have the last of the output.
+                Check(Native.TerminateJobObject(job, unchecked((uint) code)));
+                outputTee?.Join(TeeDrainMilliseconds);
+                errorTee?.Join(TeeDrainMilliseconds);
+                tray.Finish(code, stopped);
+            }
+
+            return code;
+
+            int End(int result, string message)
+            {
+                Check(Native.TerminateJobObject(job, unchecked((uint) result)));
+                Check(Native.WaitForSingleObject(process.Process, Native.InfiniteWait) == Native.WaitObjectSignaled);
+                Diagnose(diagnostics, capture, message);
+                return result;
+            }
 
             void SetAttribute(nuint attribute, nint[] handles)
             {
@@ -171,6 +234,13 @@ internal static class Program
         {
             Native.DeleteProcThreadAttributeList(attributes);
         }
+    }
+
+    // True when --stdout and --stderr name one file, which then shares one handle.
+    internal static bool SharesFile(Options options)
+    {
+        return options.Error is not null && options.Output is not null &&
+            string.Equals(Path.GetFullPath(options.Error), Path.GetFullPath(options.Output), StringComparison.OrdinalIgnoreCase);
     }
 
     // A native executable gets the raw tail unchanged. Scripts go to their interpreter,
@@ -290,7 +360,16 @@ internal static class Program
         }
     }
 
-    private static void Report(Options options, string message)
+    // A diagnostic once the streams are set up: to the child's stderr destination, and into the --tray viewer.
+    private static void Diagnose(nint error, OutputCapture? capture, string message)
+    {
+        var text = $"headless-run: {message}\n";
+        var bytes = Encoding.UTF8.GetBytes(text);
+        Native.WriteFile(error, bytes, (uint) bytes.Length, out _, 0);
+        capture?.Note(text);
+    }
+
+    internal static void Report(Options options, string message)
     {
         var text = $"headless-run: {message}\n";
         try
@@ -360,11 +439,13 @@ internal static class Program
         --detach              Return after start; no launcher-owned job or timeout
         --windows-powershell  Run a .ps1 under Windows PowerShell instead of pwsh
         --elevate             Run elevated, after a UAC prompt; streams are relayed
+        --tray                Tray icon while the job runs: show output, open logs, stop
         --help                Print this help
         --version             Print version
         Value options also accept --name=VALUE. Output parent directories are created.
         .cmd/.bat run under cmd.exe /d /s /c; .ps1 under pwsh -NoProfile -NonInteractive -File.
-        Exit: child's code; 124 timeout; 125 launcher failure; 0 detached/help/version.
+        Exit: child's code; 124 timeout; 125 launcher failure; 130 stopped from the tray;
+        0 detached/help/version.
         Quote program paths containing spaces. No shell expansion is performed.
         """ + "\n";
 }
