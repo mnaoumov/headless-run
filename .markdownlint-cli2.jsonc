@@ -1,5 +1,9 @@
 {
   "config": {
-    "MD013": false
+    "MD013": false,
+    // A changelog repeats its section headings under every version.
+    "MD024": {
+      "siblings_only": true
+    }
   }
 }

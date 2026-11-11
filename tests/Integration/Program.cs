@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Xml.Linq;
 
 internal static class Program
 {
@@ -31,6 +32,13 @@ internal static class Program
     private const uint WmCommand = 0x0111;
     private const uint WmGetText = 0x000D;
     private const uint WmGetTextLength = 0x000E;
+    private const string EventSource = "headless-run";
+    private const int EventQueryCount = 200;
+    private const int EventExited = 1;
+    private const int EventExitedNonzero = 2;
+    private const int EventTimedOut = 3;
+    private const int EventLaunchFailure = 5;
+    private const int EventDetached = 6;
     [DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
     private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")]
@@ -325,6 +333,39 @@ internal static class Program
                 var run = Run(launcher, "--elevate --detach -- " + Quote(Self) + " child later " + Quote(marker), relay: true);
                 Assert(run.Code == 0, run.Error);
                 WaitFor(() => File.Exists(marker), "elevated detached child did not finish");
+            });
+            Test("--event-log writes one Application event per run, with the outcome's id", () =>
+            {
+                // Each run gets its own working directory, whose name finds that run's events in the log.
+                string EventDirectory(string name)
+                {
+                    return Path.Combine(root, "event-" + name + "-" + Guid.NewGuid().ToString("N"));
+                }
+
+                var exited = EventDirectory("exited");
+                Assert(Run(launcher, "--event-log --create-cwd --cwd " + Quote(exited) + " -- " + Quote(Self) + " child exit 0").Code == 0, "exit 0");
+                ExpectEvent(exited, EventExited, "exited with code 0");
+                var nonzero = EventDirectory("nonzero");
+                Assert(Run(launcher, "--event-log --create-cwd --cwd " + Quote(nonzero) + " -- " + Quote(Self) + " child exit 7").Code == 7, "exit 7");
+                ExpectEvent(nonzero, EventExitedNonzero, "exited with code 7");
+                var timeout = EventDirectory("timeout");
+                Assert(Run(launcher, "--event-log --timeout 50ms --create-cwd --cwd " + Quote(timeout) + " -- " + Quote(Self) + " child sleep").Code == TimeoutExitCode, "timeout");
+                ExpectEvent(timeout, EventTimedOut, "timeout expired");
+                var failure = EventDirectory("failure");
+                Assert(Run(launcher, "--event-log --create-cwd --cwd " + Quote(failure) + " -- missing-headless-test.exe").Code == LaunchFailureExitCode, "failure");
+                ExpectEvent(failure, EventLaunchFailure, "Launcher failure");
+                var detached = EventDirectory("detached");
+                var marker = Path.Combine(root, "event-detached.txt");
+                Assert(Run(launcher, "--event-log --stdout NUL --stderr NUL --detach --create-cwd --cwd " + Quote(detached) + " -- " + Quote(Self) + " child later " + Quote(marker)).Code == 0, "detach");
+                ExpectEvent(detached, EventDetached, "started detached");
+                WaitFor(() => File.Exists(marker), "detached child did not finish");
+                // Under --elevate only the copy records the outcome, so a relayed timeout is one event, not two.
+                var relayed = EventDirectory("relayed");
+                Assert(Run(launcher, "--elevate --event-log --timeout 50ms --create-cwd --cwd " + Quote(relayed) + " -- " + Quote(Self) + " child sleep", relay: true).Code == TimeoutExitCode, "relayed timeout");
+                ExpectEvent(relayed, EventTimedOut, "timeout expired");
+                var silent = EventDirectory("silent");
+                Assert(Run(launcher, "--create-cwd --cwd " + Quote(silent) + " -- " + Quote(Self) + " child exit 0").Code == 0, "no event log");
+                Assert(Events(silent).Count == 0, "an event was written without --event-log");
             });
             Test("--elevate does nothing when the caller is already elevated", () =>
             {
@@ -747,6 +788,34 @@ internal static class Program
     private static string Quote(string value)
     {
         return "\"" + value + "\"";
+    }
+    // The launcher's Application-log events whose text names this directory, newest first.
+    private static List<(int Id, string Text)> Events(string directory)
+    {
+        using var query = Process.Start(new ProcessStartInfo("wevtutil.exe")
+        {
+            ArgumentList = { "qe", "Application", "/q:*[System[Provider[@Name='" + EventSource + "']]]", "/c:" + EventQueryCount, "/rd:true", "/f:xml" },
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        })!;
+        var xml = query.StandardOutput.ReadToEnd();
+        query.WaitForExit();
+        Assert(query.ExitCode == 0, "wevtutil failed: " + query.ExitCode);
+        XNamespace events = "http://schemas.microsoft.com/win/2004/08/events/event";
+        return XElement.Parse("<Events>" + xml + "</Events>").Elements(events + "Event")
+            .Select(entry => (Id: int.Parse(entry.Element(events + "System")!.Element(events + "EventID")!.Value, CultureInfo.InvariantCulture),
+                Text: string.Concat(entry.Descendants(events + "Data").Select(data => data.Value))))
+            .Where(entry => entry.Text.Contains("Working directory: " + directory + "\n", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+    private static void ExpectEvent(string directory, int id, string text)
+    {
+        List<(int Id, string Text)> found = [];
+        WaitFor(() => (found = Events(directory)).Count != 0, "no event for " + directory);
+        Assert(found.Count == 1, found.Count + " events for one run: " + directory);
+        Assert(found[0].Id == id, "event id " + found[0].Id + ", expected " + id + ": " + found[0].Text);
+        Assert(found[0].Text.Contains(text, StringComparison.OrdinalIgnoreCase), "event text: " + found[0].Text);
     }
     private static void WaitFor(Func<bool> predicate, string message)
     {

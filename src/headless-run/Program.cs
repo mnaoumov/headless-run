@@ -15,7 +15,10 @@ internal static class Program
 
     private static int Main()
     {
+        JobEventLog.Begin();
         Options options = new();
+        int code;
+        string? diagnostic = null;
         try
         {
             options.Parse(Marshal.PtrToStringUni(Native.GetCommandLineW())!);
@@ -43,17 +46,23 @@ internal static class Program
             }
             if (Elevation.Required(options))
             {
-                return Elevation.Run(options);
+                code = Elevation.Run(options);
             }
-
-            var caller = options.ElevatedRelay is null ? 0 : Elevation.Attach(options);
-            return Launch(options, caller);
+            else
+            {
+                var caller = options.ElevatedRelay is null ? 0 : Elevation.Attach(options);
+                code = Launch(options, caller);
+            }
         }
         catch (Exception error)
         {
             Report(options, error.Message);
-            return LaunchFailure;
+            diagnostic = error.Message;
+            code = LaunchFailure;
         }
+
+        JobEventLog.Write(options, code, diagnostic);
+        return code;
     }
 
     // caller: under --elevate, the unelevated launcher this copy relays for; its exit ends the run.
@@ -155,6 +164,7 @@ internal static class Program
             resources.Handle(process.Thread);
             if (options.Detach)
             {
+                JobEventLog.Record(JobEventLog.Outcome.Detached);
                 return 0;
             }
 
@@ -184,16 +194,19 @@ internal static class Program
             {
                 // The caller is gone, so nobody is left to relay to: end the tree as its own kill would have.
                 Check(Native.TerminateJobObject(job, LaunchFailure));
+                JobEventLog.Record(JobEventLog.Outcome.LaunchFailure, "The unelevated caller exited; the elevated job was terminated.");
                 return LaunchFailure;
             }
 
             if (stopIndex >= 0 && wait == Native.WaitObjectSignaled + (uint) stopIndex)
             {
                 stopped = true;
+                JobEventLog.Record(JobEventLog.Outcome.Stopped);
                 code = End(Stopped, "Stopped from the tray; the child job was terminated.");
             }
             else if (wait == Native.WaitTimeout)
             {
+                JobEventLog.Record(JobEventLog.Outcome.TimedOut);
                 code = End(TimedOut, "Timeout expired; the child job was terminated.");
             }
             else
@@ -440,6 +453,7 @@ internal static class Program
         --windows-powershell  Run a .ps1 under Windows PowerShell instead of pwsh
         --elevate             Run elevated, after a UAC prompt; streams are relayed
         --tray                Tray icon while the job runs: show output, open logs, stop
+        --event-log           Write the run's outcome to the Application event log
         --help                Print this help
         --version             Print version
         Value options also accept --name=VALUE. Output parent directories are created.

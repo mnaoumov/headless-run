@@ -28,6 +28,7 @@ internal sealed class Options
     public bool WindowsPowerShell;
     public bool Elevate;
     public bool Tray;
+    public bool EventLog;
     public string? ElevatedRelay;
     public string Arguments = "";
     public uint PriorityClass;
@@ -98,6 +99,9 @@ internal sealed class Options
                     break;
                 case "--tray":
                     Tray = true;
+                    break;
+                case "--event-log":
+                    EventLog = true;
                     break;
                 case "--elevated-relay":
                     ElevatedRelay = ReadValue(flag);
