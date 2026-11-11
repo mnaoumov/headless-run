@@ -4,7 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Breaking changes
+
+- `--windows-powershell` is gone: use `--engine powershell`.
+- A `.js` file now runs under `node`; before, it went to `CreateProcessW` and failed. The same holds for `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.py`, `.pyw`, `.pl`, `.rb`, `.php`, `.lua`, `.r`, `.tcl`, `.sh`, `.vbs` and `.wsf`, each under its own engine.
+
 ### New
+
+- Engines: the extension of the program picks the interpreter from one table of engines: `cmd`, `pwsh`, `powershell`, `node`, `deno`, `bun`, `python`, `perl`, `ruby`, `php`, `lua`, `rscript`, `tclsh`, `bash` and `cscript`. `--engine NAME` picks one explicitly; an engine that does not accept the program's extension is refused unless `--force-engine` is passed. A missing interpreter fails with 125 and says how to point the engine at it.
+- Node runs TypeScript (`.ts`, `.mts`, `.cts`) directly; a Node older than 22.18.0, or 23.0 to 23.5, fails with 125 naming the version.
+- Config files register new engines or change built-in ones: `%ProgramData%\headless-run\config.json` for every account, `%APPDATA%\headless-run\config.json` for yours, and `--config FILE` for one run. A JSON schema validates them in an editor.
+- `headless-run config` reads and writes those files after `git config`: `--list [--show-origin]`, `--edit`, get, set, `--add`, `--unset`, with `--global`, `--system` and `--file` scopes.
+- `.exe` and `.com` programs are documented and tested. A file that is no Windows program and that no engine runs fails with a diagnostic naming the setting that would run it.
 
 - `--tray` shows a notification-area icon while the job runs. Its menu shows the command line, start time and process id, shows or hides a window with the job's output, opens the `--stdout` and `--stderr` files, and stops the job, which then returns 130. When the job ends, a notification shows the exit code. It works with `--timeout` and `--elevate`; `--detach` refuses it.
 - `--event-log` writes one event per run to the Windows Application log, under the source `headless-run`: the outcome (exit code, timeout, tray stop, launcher failure with its diagnostic, or detached start) with its own event id, the command line, working directory and duration. A failed scheduled run is then visible in Event Viewer with no log file. Writing it never fails the job.

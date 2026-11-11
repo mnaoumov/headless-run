@@ -1,6 +1,10 @@
 # headless-run development
 
-`headless-run` is a Windows-subsystem launcher built with C# and .NET 10. It forwards the raw child command line through documented Win32 APIs. Keep the child tail opaque: only launcher options before `--` may be parsed. The one read of the tail is the program token's extension, which picks the host: a native executable gets the tail unchanged, `.cmd`/`.bat` get it wrapped as `cmd.exe /d /s /c "<tail>"`, and `.ps1` gets it appended to `pwsh -NoProfile -NonInteractive -File`. Never re-quote or split the tail for any host.
+`headless-run` is a Windows-subsystem launcher built with C# and .NET 10. It forwards the raw child command line through documented Win32 APIs. Keep the child tail opaque: only launcher options before `--` may be parsed. The one read of the tail is the program token's extension, which picks the engine: a native executable gets the tail unchanged, and a script gets `"<interpreter>" <engine arguments> <tail>`, with the tail in one quote pair for `cmd` (`quoteCommand`). Never re-quote or split the tail for any engine; a host that reads options after the script (`dotnet run`, `dotnet fsi`) is left out of the built-in table for that reason.
+
+## Engines and config
+
+`Engines.cs` holds the built-in engine table as data, flattened into the same git-style keys a config file has (`engine.<name>.path|arguments|extensions|quoteCommand`, `extension.<ext>`), so built-in and user engines go through one path: layers built-in, `%ProgramData%`, `%APPDATA%`, `--config`, last key wins. `Config.cs` reads and validates a file with `JsonDocument` and edits it with `JsonNode` (key order kept, AOT-safe; no reflection serializer). `ConfigCommand.cs` is the `config` subcommand, recognised only as the first argument. Adding an engine is one row in `BuiltInEngines.Rows`, a default in `Defaults` when it should own an extension, a case in the integration test's engine table (skipped when the interpreter is missing), and a README table row. The tests point `APPDATA` and `ProgramData` at the temporary root for every launcher they start; never let a test read or write the machine's own config.
 
 ## L1. C# coding standards
 
