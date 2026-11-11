@@ -15,13 +15,19 @@ internal static class Program
 
     private static int Main()
     {
+        var commandLine = Marshal.PtrToStringUni(Native.GetCommandLineW())!;
+        if (ConfigArguments(commandLine) is { } configArguments)
+        {
+            return ConfigCommand.Run(configArguments);
+        }
+
         JobEventLog.Begin();
         Options options = new();
         int code;
         string? diagnostic = null;
         try
         {
-            options.Parse(Marshal.PtrToStringUni(Native.GetCommandLineW())!);
+            options.Parse(commandLine);
             if (options.Help || options.Version)
             {
                 var text = options.Help ? Help : "headless-run 1.0.0\n";
@@ -63,6 +69,23 @@ internal static class Program
 
         JobEventLog.Write(options, code, diagnostic);
         return code;
+    }
+
+    // The text after "config" when it is the first argument, so a program named config after -- never matches.
+    private static string? ConfigArguments(string commandLine)
+    {
+        var position = 0;
+        try
+        {
+            Options.ReadToken(commandLine, ref position);
+            var first = Options.ReadToken(commandLine, ref position);
+            return first == ConfigCommand.Name ? commandLine[position..] : null;
+        }
+        catch (ArgumentException)
+        {
+            // An unclosed quote: Parse reports it.
+            return null;
+        }
     }
 
     // caller: under --elevate, the unelevated launcher this copy relays for; its exit ends the run.
@@ -158,8 +181,18 @@ internal static class Program
             };
             var flags = Native.CreateNoWindow | Native.ExtendedStartupInfoPresent | Native.CreateUnicodeEnvironment; // NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | UNICODE_ENVIRONMENT
             flags |= options.PriorityClass; // 0 when --priority is omitted: Windows picks the default class.
-            Check(Native.CreateProcessW(application, new StringBuilder(commandLine), 0, 0, true, flags, environment,
-                options.Directory, ref startup, out var process));
+            if (!Native.CreateProcessW(application, new StringBuilder(commandLine), 0, 0, true, flags, environment,
+                options.Directory, ref startup, out var process))
+            {
+                var failure = Marshal.GetLastWin32Error();
+                if (application is null && failure == Native.ErrorBadExeFormat)
+                {
+                    throw new InvalidOperationException(NotAProgram(options.Tail));
+                }
+
+                throw new Win32Exception(failure);
+            }
+
             resources.Handle(process.Process);
             resources.Handle(process.Thread);
             if (options.Detach)
@@ -256,35 +289,34 @@ internal static class Program
             string.Equals(Path.GetFullPath(options.Error), Path.GetFullPath(options.Output), StringComparison.OrdinalIgnoreCase);
     }
 
-    // A native executable gets the raw tail unchanged. Scripts go to their interpreter,
+    // A native executable gets the raw tail unchanged. A script goes to its engine's interpreter,
     // which then applies its own argument rules to the same raw text.
     private static (string? Application, string CommandLine) ResolveCommand(Options options)
     {
-        var extension = Path.GetExtension(ProgramToken(options.Tail)).ToLowerInvariant();
-        if (options.WindowsPowerShell && extension != ".ps1")
+        var extension = ProgramExtension(options.Tail);
+        var engine = EngineTable.Load(options.ConfigFile).Select(options.Engine, extension, options.ForceEngine);
+        if (engine is null)
         {
-            throw new ArgumentException("--windows-powershell applies only when the program is a .ps1 script.");
+            return (null, options.Tail);
         }
 
-        switch (extension)
-        {
-            case ".cmd":
-            case ".bat":
-                var shell = Environment.GetEnvironmentVariable("ComSpec") is { Length: > 0 } comSpec
-                    ? comSpec
-                    : Path.Combine(Environment.SystemDirectory, "cmd.exe");
-                // /s /c "<tail>": cmd strips exactly the outer quote pair and runs the rest as written.
-                return (shell, $"\"{shell}\" /d /s /c \"{options.Tail}\"");
-            case ".ps1":
-                var host = options.WindowsPowerShell
-                    ? Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe")
-                    : FindOnPath("pwsh.exe", options) ?? throw new FileNotFoundException(
-                        "A .ps1 script runs under pwsh (PowerShell 7 or later), which was not found on PATH. " +
-                        "Install PowerShell 7, or pass --windows-powershell to use Windows PowerShell 5.1.");
-                return (host, $"\"{host}\" -NoProfile -NonInteractive -File {options.Tail}");
-            default:
-                return (null, options.Tail);
-        }
+        var interpreter = Interpreter.Find(engine, options.Environment);
+        Interpreter.CheckTypeScript(engine, interpreter, extension);
+        return (interpreter, Interpreter.CommandLine(interpreter, engine, options.Tail));
+    }
+
+    private static string ProgramExtension(string tail)
+    {
+        return Path.GetExtension(ProgramToken(tail)).ToLowerInvariant();
+    }
+
+    // CreateProcessW refused a file that is no Windows program: say which engine setting would run it.
+    private static string NotAProgram(string tail)
+    {
+        var extension = ProgramExtension(tail);
+        var name = extension.Length > 1 ? extension[1..] : "<ext>";
+        return $"'{ProgramToken(tail)}' is not a Windows program, and no engine runs '{extension}' files. " +
+            $"Pass --engine NAME, or map the extension: headless-run config --global extension.{name} <engine>";
     }
 
     // The program token as CreateProcessW reads it: up to the closing quote, or up to whitespace.
@@ -298,22 +330,6 @@ internal static class Program
 
         var space = tail.IndexOfAny([' ', '\t']);
         return space < 0 ? tail : tail[..space];
-    }
-
-    private static string? FindOnPath(string fileName, Options options)
-    {
-        var path = options.Environment.TryGetValue("PATH", out var overridden)
-            ? overridden
-            : Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var directory in path.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var candidate = Path.Combine(directory.Trim('"'), fileName);
-            if (File.Exists(candidate))
-            {
-                return Path.GetFullPath(candidate);
-            }
-        }
-        return null;
     }
 
     private static void PrepareWorkingDirectory(Options options)
@@ -440,6 +456,7 @@ internal static class Program
     private const string Help = """
         headless-run 1.0.0 - run a console program without a console window
         Usage: headless-run.exe [options] -- <program> [arguments...]
+               headless-run.exe config ...   (see headless-run config --help)
         --stdout FILE         Redirect stdout (overwrite by default)
         --stderr FILE         Redirect stderr and launcher diagnostics
         --append              Append both output files
@@ -450,14 +467,17 @@ internal static class Program
         --priority CLASS      idle, below-normal, normal, above-normal, high or realtime
         --timeout DURATION    Terminate the whole job after 250ms, 30s, 2m or 1h
         --detach              Return after start; no launcher-owned job or timeout
-        --windows-powershell  Run a .ps1 under Windows PowerShell instead of pwsh
+        --engine NAME         Run the program under this engine (pwsh, powershell, node...)
+        --force-engine        Use --engine even when it does not accept the extension
+        --config FILE         Read engines from this file too, over the global ones
         --elevate             Run elevated, after a UAC prompt; streams are relayed
         --tray                Tray icon while the job runs: show output, open logs, stop
         --event-log           Write the run's outcome to the Application event log
         --help                Print this help
         --version             Print version
         Value options also accept --name=VALUE. Output parent directories are created.
-        .cmd/.bat run under cmd.exe /d /s /c; .ps1 under pwsh -NoProfile -NonInteractive -File.
+        The extension picks the engine: .cmd/.bat cmd, .ps1 pwsh, .js/.ts node, .py python...
+        List them with: headless-run config --list. Other programs run directly.
         Exit: child's code; 124 timeout; 125 launcher failure; 130 stopped from the tray;
         0 detached/help/version.
         Quote program paths containing spaces. No shell expansion is performed.

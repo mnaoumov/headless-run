@@ -47,6 +47,8 @@ internal static class Native
     internal const int UserObjectFlagsIndex = 1;
     internal const uint WindowStationVisible = 1;
     internal const int ErrorCancelled = 1223;
+    internal const int ErrorBadExeFormat = 193;
+    internal const uint AttachParentProcess = uint.MaxValue;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct UserObjectFlags
@@ -146,6 +148,9 @@ internal static class Native
     internal static extern bool DeregisterEventSource(nint eventLog);
     [DllImport(Kernel32Library, SetLastError = true)]
     internal static extern nint GetStdHandle(int kind);
+    [DllImport(Kernel32Library, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool AttachConsole(uint processId);
     [DllImport(Kernel32Library)]
     internal static extern nint GetCurrentProcess();
     [DllImport(Kernel32Library, SetLastError = true)]

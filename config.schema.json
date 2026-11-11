@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mnaoumov/headless-run/main/config.schema.json",
+  "title": "headless-run config",
+  "description": "Engines for headless-run: %APPDATA%\\headless-run\\config.json, %ProgramData%\\headless-run\\config.json, or a file passed with --config.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "engine": {
+      "description": "Engines by name. A key set here replaces the same key of a lower layer (built-in, then system, then global, then --config).",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "The interpreter: a file name searched on PATH (.exe is added when it has no extension), or a path. %NAME% expands from the child's environment. An array lists candidates, and the first that exists wins.",
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ]
+          },
+          "arguments": {
+            "description": "Arguments placed between the interpreter and the program, such as [\"-NoProfile\", \"-File\"].",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "extensions": {
+            "description": "The extensions --engine accepts without --force-engine, such as [\".py\", \".pyw\"].",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\.[A-Za-z0-9_-]+$"
+            }
+          },
+          "quoteCommand": {
+            "description": "Wrap the program and its arguments in one outer quote pair, as cmd.exe /s /c needs.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "extension": {
+      "description": "The engine each extension runs under when no --engine is given, by extension without its dot, such as {\"py\": \"python\"}.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^\\.?[A-Za-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      }
+    }
+  }
+}

@@ -28,13 +28,112 @@ A calling shell processes its own syntax before the launcher sees it; for precis
 
 ## Programs and scripts
 
-The extension of the program decides how it starts. The comparison ignores case.
+The extension of the program picks an **engine**, the interpreter that runs it. The comparison ignores case.
 
-1. **A native executable** (anything other than the extensions below): the raw text from the program onwards goes to `CreateProcessW` as the command line. There is no shell expansion: `&`, `^`, `%`, `|`, `$` and redirection characters are ordinary characters, and the program parses its own arguments.
-2. **`.cmd` or `.bat`**: runs as `cmd.exe /d /s /c "<raw text>"`, where `cmd.exe` is `%ComSpec%`. `/d` skips AutoRun commands, and `/s` makes `cmd.exe` strip exactly the outer quote pair it was given, so the raw text runs as written. `cmd.exe` rules then apply to the arguments: `%NAME%` expands, `&`, `|`, `<`, `>` and `^` are operators unless quoted or escaped, and the script reads `%1` with its quotes and `%~1` without them.
-3. **`.ps1`**: runs as `pwsh -NoProfile -NonInteractive -File <raw text>`, with `pwsh.exe` found on `PATH` (an `--env PATH=...` override is searched instead of the launcher's own). `-File` binds each argument as a literal string, so `$name` and `$(...)` are not evaluated. A missing `pwsh` is a launcher failure (125) that names the fix; Windows PowerShell 5.1 runs a script only when `--windows-powershell` asks for it, never as a silent fallback. Execution policy is the host's own: `pwsh` on Windows defaults to `RemoteSigned`. For other host flags, run `pwsh.exe` as the program yourself.
+1. **A native executable**, `.exe` or `.com`, and any extension no engine claims: the raw text from the program onwards goes to `CreateProcessW` as the command line. There is no shell expansion: `&`, `^`, `%`, `|`, `$` and redirection characters are ordinary characters, and the program parses its own arguments. A file that is no Windows program and that no engine runs, such as a `.psm1`, is a launcher failure (125) that names the setting which would run it.
+2. **A script**: runs as `"<interpreter>" <engine arguments> <raw text>`. The raw text is never split or re-quoted, so the interpreter applies its own argument rules to it, and the script receives its arguments as the interpreter parses them.
+
+`--engine NAME` picks the engine instead of the extension, such as `--engine powershell` for Windows PowerShell 5.1 or `--engine deno` for a `.ts` file. An engine that does not accept the program's extension is a launcher failure (125) naming the engine, the extension and `--force-engine`, which runs the program with that engine anyway. Each engine finds its interpreter on `PATH` (an `--env PATH=...` override is searched instead of the launcher's own), or at a path; a missing one is a launcher failure (125) that says what was tried and how to point the engine at it. There is never a silent fallback to another engine.
+
+The built-in engines:
+
+| Engine | Interpreter | Arguments before the script | Accepts | Default for |
+| --- | --- | --- | --- | --- |
+| `cmd` | `%ComSpec%` | `/d /s /c`, and the raw text in one quote pair | `.cmd`, `.bat` | `.cmd`, `.bat` |
+| `pwsh` | `pwsh.exe` (PowerShell 7) | `-NoProfile -NonInteractive -File` | `.ps1` | `.ps1` |
+| `powershell` | Windows PowerShell 5.1 | `-NoProfile -NonInteractive -File` | `.ps1` | |
+| `node` | `node.exe` | | `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts` | all six |
+| `deno` | `deno.exe` | `run --allow-all` | the same six | |
+| `bun` | `bun.exe` | | the same six | |
+| `python` | `py.exe`, then `python.exe` | | `.py`, `.pyw` | `.py`, `.pyw` |
+| `perl` | `perl.exe` | | `.pl` | `.pl` |
+| `ruby` | `ruby.exe` | | `.rb` | `.rb` |
+| `php` | `php.exe` | | `.php` | `.php` |
+| `lua` | `lua.exe` | | `.lua` | `.lua` |
+| `rscript` | `Rscript.exe` | | `.r` | `.r` |
+| `tclsh` | `tclsh.exe` | | `.tcl` | `.tcl` |
+| `bash` | Git for Windows' `bash.exe` | | `.sh` | `.sh` |
+| `cscript` | `%SystemRoot%\System32\cscript.exe` | `//nologo` | `.vbs`, `.wsf`, `.js` | `.vbs`, `.wsf` |
+
+Notes on them:
+
+1. **`cmd`**: `/d` skips AutoRun commands, and `/s` makes `cmd.exe` strip exactly the outer quote pair it was given, so the raw text runs as written. `cmd.exe` rules then apply to the arguments: `%NAME%` expands, `&`, `|`, `<`, `>` and `^` are operators unless quoted or escaped, and the script reads `%1` with its quotes and `%~1` without them.
+2. **`pwsh` and `powershell`**: `-File` binds each argument as a literal string, so `$name` and `$(...)` are not evaluated. Execution policy is the host's own: `pwsh` on Windows defaults to `RemoteSigned`. A missing `pwsh` never falls back to Windows PowerShell; pass `--engine powershell` for that.
+3. **`node` and TypeScript**: Node runs `.ts`, `.mts` and `.cts` itself by stripping the types, by default from Node 22.18.0 on the 22 line and from 23.6.0 ([v22.18.0](https://nodejs.org/en/blog/release/v22.18.0), [v23.6.0](https://nodejs.org/en/blog/release/v23.6.0)). An older Node is a launcher failure (125) naming the version found and the minimum. Type stripping only erases type syntax: `enum`, `namespace` and parameter properties need Node's `--experimental-transform-types`, which you can add to `engine.node.arguments`, and imports must name their `.ts` file. `.js` runs under `node` rather than Windows Script Host; `--engine cscript` runs a `.js` under WSH.
+4. **`deno`**: `--allow-all` gives the script what `node` would give it. Set `engine.deno.arguments` to narrower permissions.
+5. **`python`**: `py.exe` is the Python launcher, which also honours a script's `#!` line. `.pyw` runs under the console interpreter too, because `pythonw` has no standard streams for `--stdout` and `--stderr` to capture, and the launcher hides the console anyway. The `python.exe` of a Windows without Python is the Microsoft Store stub, which exits with 9009.
+6. **`bash`**: Git for Windows' `bash.exe`, found at `%ProgramFiles%\Git\bin`, `%LOCALAPPDATA%\Programs\Git\bin` or a Scoop install. The `bash.exe` in `System32` is WSL's, which cannot open a Windows path, so it is never used; a WSL engine needs path translation and is left to a config entry.
+7. Interpreters installed under another name, such as `lua54.exe` or `tclsh86.exe`, are reached by setting the engine's `path`.
+
+Considered and left out: `dotnet run app.cs` and `dotnet fsi script.fsx`, because both read options such as `--help` after the script as their own, so the raw text could not reach the script untouched; and AutoHotkey, a GUI runtime. Any of them can still be registered in a config file.
 
 The interpreter's exit code is returned: `exit /b <n>` from a batch file, `exit <n>` from a script.
+
+## Configuration
+
+Config files add engines, change a built-in one, or change which engine an extension runs under. They are read in this order, and a key set in a later one replaces the same key of an earlier one:
+
+1. The built-in engines above.
+2. **System**: `%ProgramData%\headless-run\config.json`, for every account. A Task Scheduler job that runs as `SYSTEM` or a service account reads this one, since its `%APPDATA%` is not yours.
+3. **Global**: `%APPDATA%\headless-run\config.json`, for your account.
+4. **`--config FILE`** on the command line, such as `--config .\.headless-run.json` for a project's own engines. A relative path resolves against the launcher's working directory, like `--stdout`, independently of `--cwd`.
+
+Nothing else is read: no file is picked up from the working directory, and no environment variable names a config file, so what changes a job's engines is always in its own command line or in these two fixed files. A missing or malformed file named by `--config`, and a malformed system or global file, is a launcher failure (125) that names the file, and the line for invalid JSON. Under `--elevate` the elevated copy reads the same files, since it runs with the caller's environment and working directory.
+
+A config file is strict JSON, without comments, so that `headless-run config` can rewrite it without losing anything:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/mnaoumov/headless-run/main/config.schema.json",
+  "engine": {
+    "python": {
+      "path": "C:\\Python313\\python.exe",
+      "arguments": ["-u"]
+    },
+    "wsl-bash": {
+      "path": "wsl.exe",
+      "arguments": ["--exec", "bash"],
+      "extensions": [".sh"]
+    }
+  },
+  "extension": {
+    "js": "deno"
+  }
+}
+```
+
+1. `engine.<name>.path`: the interpreter, as a file name searched on `PATH` (`.exe` is added when it has none) or a path. `%NAME%` expands from the child's environment. An array lists candidates, and the first that exists wins.
+2. `engine.<name>.arguments`: the arguments placed between the interpreter and the program. Each is quoted by Windows' rules when it needs quotes.
+3. `engine.<name>.extensions`: the extensions `--engine` accepts without `--force-engine`.
+4. `engine.<name>.quoteCommand`: `true` wraps the raw text in one quote pair, as `cmd.exe /s /c` needs.
+5. `extension.<ext>`: the engine an extension runs under when no `--engine` is given, by extension without its dot. An extension mapped to an engine is accepted by it too.
+
+Engine names have letters, digits, `-` and `_`, and are compared without case. A key replaces the same key below it, so `engine.python.path` in the global file keeps the built-in `python` engine's extensions. The schema at `$schema` lets an editor validate and complete the file.
+
+## `config` command
+
+`headless-run config` reads and writes these files, after `git config`. It is recognised only as the first argument, so a program named `config` after `--` still runs.
+
+```text
+headless-run config [--global | --system | --file FILE] <action>
+```
+
+1. `--list` (`-l`) `[--show-origin]`: every entry, one line per value, as `key=value`. With no scope, every layer in order, the built-in ones first, so the last line for a key is the value that applies. `--show-origin` prefixes each with `builtin` or `file:<path>` and a tab.
+2. `--edit` (`-e`): create the file when missing, with its `$schema` line and an empty engine list, open it in an editor and wait, then validate it, naming the line of any JSON error. The editor is the first of `HEADLESS_RUN_EDITOR`, `VISUAL` and `EDITOR` that is set, run as a command through `cmd.exe` so that `code --wait` works, and otherwise `notepad.exe`. These variables only choose the editor.
+3. `<key>`: print a value, one line per array item. With no scope, the value that applies. Exit 1 when the key is not set.
+4. `<key> <value>`: set a value. `engine.<name>.extensions` takes a comma-separated list, such as `.py,.pyw`; `path` and `arguments` take one value, and `--add <key> <value>` appends another.
+5. `--unset <key>`: remove a key, or a whole engine with `engine.<name>`. Exit 5 when there was nothing to remove.
+
+With no scope, `--edit` and every write go to `--global`. `--system` writes need an elevated prompt; a write without one fails with 125 and says so. A write keeps the rest of the file in its order, checks the result before it saves it, and replaces the file atomically. Invalid usage and an invalid file are 125, with a diagnostic.
+
+```text
+headless-run config --global engine.python.path C:\Python313\python.exe
+headless-run config --global extension.js deno
+headless-run config --list --show-origin
+headless-run config --unset engine.python
+```
+
+The launcher is a Windows-subsystem program, so a terminal does not wait for it. When its output is not redirected, `config` writes to the console of the terminal that started it, but `cmd.exe` can show its prompt first and does not see the exit code. Pipe the output, such as `headless-run config --list | more`, or in PowerShell `headless-run config --list | Out-Host`, to have the shell wait and receive the exit code.
 
 ## Options
 
@@ -50,12 +149,14 @@ All launcher options precede `--`. Values use Windows double-quote/backslash rul
 8. `--priority CLASS`: start the child in a process priority class: `idle`, `below-normal`, `normal`, `above-normal`, `high` or `realtime`. Omitted, Windows chooses as usual: `normal`, or the launcher's own class when that is `idle` or `below-normal`. A priority class only orders who runs first when processors are contended; it is not a CPU cap, and a low-priority child still uses an idle processor fully. `realtime` preempts the threads of every other process, including system tasks, so a busy realtime child can leave the mouse unresponsive and disk caches unflushed, freezing the desktop; without the "Increase scheduling priority" privilege Windows starts it at `high` instead. An enclosing job with a priority limit overrides the requested class.
 9. `--timeout DURATION`: wait at most a positive duration with `ms`, `s`, `m` or `h` suffix, such as `250ms`, `0.5s`, `30m`, `1h`. Fractions round up to milliseconds. Maximum: `4294967294ms` (about 49.7 days). Timing begins after process creation. Expiry terminates the job and returns 124.
 10. `--detach`: return 0 after successful process creation, without creating a launcher-owned job. Cannot combine with `--timeout`. The child can outlive the launcher; an enclosing job imposed by the caller still applies. Redirect output to files for unattended use: inherited pipes remain open in the child and may keep the caller waiting for EOF.
-11. `--windows-powershell`: run a `.ps1` program under Windows PowerShell 5.1 (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`) instead of `pwsh`. Any other program with this option is a launcher failure.
-12. `--elevate`: run the child elevated, as an administrator. See [Elevation](#elevation).
-13. `--tray`: show a notification-area icon while the job runs, to view its output, open its logs or stop it. See [Tray icon](#tray-icon).
-14. `--event-log`: write the run's outcome to the Windows Application event log. See [Event log](#event-log).
-15. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
-16. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
+11. `--engine NAME`: run the program under this engine instead of the one its extension picks, such as `--engine powershell` for Windows PowerShell 5.1. See [Programs and scripts](#programs-and-scripts).
+12. `--force-engine`: with `--engine`, run the program even when the engine does not accept its extension.
+13. `--config FILE`: read engines from this file too, over the system and global ones. See [Configuration](#configuration).
+14. `--elevate`: run the child elevated, as an administrator. See [Elevation](#elevation).
+15. `--tray`: show a notification-area icon while the job runs, to view its output, open its logs or stop it. See [Tray icon](#tray-icon).
+16. `--event-log`: write the run's outcome to the Windows Application event log. See [Event log](#event-log).
+17. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
+18. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
 
 Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; the tool does not rotate logs.
 
@@ -149,7 +250,7 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) on 
 pwsh -NoProfile -File scripts/test.ps1
 ```
 
-The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.cmd`/`.bat`/`.ps1` dispatch and their argument rules, console visibility, failures, timeout, descendant cleanup, launcher termination, detach, and the `--tray` menu, output window, finish linger and stop, driven through the launcher's hidden tray window, and the `--event-log` event for each outcome, read back from the Application log. `--elevate` is tested through its full relay. A test-only variable, `HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC=1`, starts the copy without the `runas` verb, so no prompt appears. An elevated test run, such as CI, also checks that the option does nothing there. Answering a real UAC prompt needs a person.
+The integration harness drives real children and compares direct versus wrapped argv and raw command lines, tests 32-bit exit codes, stream inheritance and file modes, created output directories, environment, cwd, every priority class, both option spellings, `.exe` and `.com` programs, every built-in engine whose interpreter the machine has (the others are skipped with a note) and their argument rules, `--engine` and `--force-engine`, the Node version gate for TypeScript, the config layers and every `config` action (with `%APPDATA%` and `%ProgramData%` pointed at a temporary folder, so the machine's own config is never read or written), console visibility, failures, timeout, descendant cleanup, launcher termination, detach, and the `--tray` menu, output window, finish linger and stop, driven through the launcher's hidden tray window, and the `--event-log` event for each outcome, read back from the Application log. `--elevate` is tested through its full relay. A test-only variable, `HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC=1`, starts the copy without the `runas` verb, so no prompt appears. An elevated test run, such as CI, also checks that the option does nothing there. Answering a real UAC prompt needs a person.
 
 For a runtime-free executable, install the [NativeAOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) and run:
 

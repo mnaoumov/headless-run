@@ -39,6 +39,11 @@ internal static class Program
     private const int EventTimedOut = 3;
     private const int EventLaunchFailure = 5;
     private const int EventDetached = 6;
+    private const int ScriptExitCode = 7;
+    private const int ConfigKeyNotFound = 1;
+    private const int ConfigNothingToUnset = 5;
+    private const int StoreStubExitCode = 9009;
+    private const string OldNodeVersion = "v20.11.0";
     [DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
     private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")]
@@ -80,6 +85,13 @@ internal static class Program
         if (args.Length != 0 && args[0] == "child")
         {
             return Child(args[1..]);
+        }
+
+        // A copy of this harness renamed node.exe stands in for an old Node in the TypeScript gate test.
+        if (args.Length == 1 && args[0] == "--version")
+        {
+            Console.Write(OldNodeVersion + "\n");
+            return 0;
         }
 
         launcher = Path.GetFullPath(args[0]);
@@ -240,7 +252,7 @@ internal static class Program
                     Assert(run.Output.Trim() == "[a b] [expanded] [\"q\"]", extension + " arguments: " + run.Output);
                 }
             });
-            Test("ps1 scripts run under pwsh, or Windows PowerShell on request", () =>
+            Test("ps1 scripts run under pwsh, or Windows PowerShell with --engine powershell", () =>
             {
                 var directory = Path.Combine(root, "ps scripts");
                 Directory.CreateDirectory(directory);
@@ -250,14 +262,232 @@ internal static class Program
                 var run = Run(launcher, "-- " + Quote(script) + " \"a b\" $env:HEADLESS_TEST");
                 Assert(run.Code == 7, "pwsh exit code: " + run.Code + " " + run.Error);
                 Assert(run.Output == "[a b] [$env:HEADLESS_TEST] Core", "pwsh arguments: " + run.Output);
-                var legacy = Run(launcher, "--windows-powershell -- " + Quote(script) + " \"a b\" c");
-                Assert(legacy.Code == 7 && legacy.Output == "[a b] [c] Desktop", "Windows PowerShell: " + legacy.Output + legacy.Error);
+                foreach (var engine in new[] { "--engine powershell", "--engine=powershell", "--engine PowerShell" })
+                {
+                    var legacy = Run(launcher, engine + " -- " + Quote(script) + " \"a b\" c");
+                    Assert(legacy.Code == 7 && legacy.Output == "[a b] [c] Desktop", engine + ": " + legacy.Output + legacy.Error);
+                }
+
                 var missing = Run(launcher, "--env " + Quote("PATH=" + directory) + " -- " + Quote(script));
-                Assert(missing.Code == LaunchFailureExitCode && missing.Error.Contains("pwsh") && missing.Error.Contains("--windows-powershell"), "missing pwsh: " + missing.Error);
+                Assert(missing.Code == LaunchFailureExitCode && missing.Error.Contains("pwsh") && missing.Error.Contains("--engine powershell"), "missing pwsh: " + missing.Error);
+                var removed = Run(launcher, "--windows-powershell -- " + Quote(script));
+                Assert(removed.Code == LaunchFailureExitCode && removed.Error.Contains("--engine powershell"), "removed option: " + removed.Error);
+            });
+            Test(".exe and .com programs run directly", () =>
+            {
+                var directory = Path.Combine(root, "com program");
+                Directory.CreateDirectory(directory);
+                foreach (var file in Directory.GetFiles(Path.GetDirectoryName(Self)!))
+                {
+                    File.Copy(file, Path.Combine(directory, Path.GetFileName(file)));
+                }
+
+                // A .com that is a PE image starts like any .exe; the copy finds its .dll beside it.
+                var com = Path.Combine(directory, "helper.com");
+                File.Copy(Path.Combine(directory, Path.GetFileName(Self)), com);
+                var direct = Path.Combine(root, "com-direct.json");
+                var wrapped = Path.Combine(root, "com-wrapped.json");
+                var tail = " child dump {0} \"a b\" x&y %PATH%";
+                Assert(Run(com, string.Format(CultureInfo.InvariantCulture, tail, Quote(direct))[1..]).Code == 0, "direct .com");
+                Assert(Run(launcher, "-- " + Quote(com) + string.Format(CultureInfo.InvariantCulture, tail, Quote(wrapped))).Code == 0, "wrapped .com");
+                Assert(File.ReadAllText(direct) == File.ReadAllText(wrapped), ".com argv changed");
+                Assert(Run(launcher, "-- " + Quote(com) + " child exit 23").Code == 23, ".com exit code");
+                var system = Path.Combine(Environment.SystemDirectory, "tree.com");
+                if (File.Exists(system))
+                {
+                    var tree = Run(launcher, "-- " + Quote(system) + " /?");
+                    Assert(tree.Code == 0 && tree.Output.Length != 0, "tree.com: " + tree.Code + " " + tree.Error);
+                }
+
+                var forced = Run(launcher, "--engine node -- " + Quote(Self) + " child exit 0");
+                Assert(forced.Code == LaunchFailureExitCode && forced.Error.Contains("--force-engine"), "--engine on an .exe: " + forced.Error);
+            });
+            Test("every built-in engine runs its script with the arguments untouched", () =>
+            {
+                var directory = Path.Combine(root, "engine scripts");
+                Directory.CreateDirectory(directory);
+                const string vbs = "Dim s, i\r\nFor i = 0 To WScript.Arguments.Count - 1\r\nIf i > 0 Then s = s & \"|\"\r\ns = s & WScript.Arguments(i)\r\nNext\r\nWScript.Echo s\r\nWScript.Quit 7\r\n";
+                const string node = "console.log(process.argv.slice(2).join('|')); process.exit(7);\n";
+                (string Engine, string Extension, string Script)[] cases = [
+                    ("", ".js", node),
+                    ("", ".mjs", node),
+                    ("", ".cjs", node),
+                    ("", ".ts", "const values: string[] = process.argv.slice(2);\nconsole.log(values.join('|'));\nprocess.exit(7);\n"),
+                    ("deno", ".ts", "console.log(Deno.args.join('|')); Deno.exit(7);\n"),
+                    ("bun", ".js", node),
+                    ("", ".py", "import sys\nprint('|'.join(sys.argv[1:]))\nsys.exit(7)\n"),
+                    ("", ".pl", "print join('|', @ARGV), \"\\n\"; exit 7;\n"),
+                    ("", ".rb", "puts ARGV.join('|'); exit 7\n"),
+                    ("", ".php", "<?php echo implode('|', array_slice($argv, 1)), \"\\n\"; exit(7);\n"),
+                    ("", ".lua", "print(table.concat(arg, '|')); os.exit(7)\n"),
+                    ("", ".R", "cat(paste(commandArgs(trailingOnly = TRUE), collapse = '|'), '\\n'); quit(status = 7)\n"),
+                    ("", ".tcl", "puts [join $argv |]; exit 7\n"),
+                    ("", ".sh", "IFS='|'; echo \"$*\"; exit 7\n"),
+                    ("", ".vbs", vbs),
+                    ("", ".wsf", "<job><script language=\"VBScript\">\r\n" + vbs + "</script></job>\r\n"),
+                    ("cscript", ".js", "var a = []; for (var i = 0; i < WScript.Arguments.length; i++) { a.push(WScript.Arguments(i)); } WScript.Echo(a.join('|')); WScript.Quit(7);\r\n")
+                ];
+                foreach (var (engine, extension, script) in cases)
+                {
+                    var name = (engine.Length == 0 ? "default" : engine) + extension;
+                    var file = Path.Combine(directory, "args " + name.Replace('.', '-') + extension);
+                    File.WriteAllText(file, script);
+                    var run = Run(launcher, (engine.Length == 0 ? "" : "--engine " + engine + " ") + "-- " + Quote(file) + " a \"b c\"");
+                    if (run.Code == LaunchFailureExitCode && (run.Error.Contains("interpreter was not found") || run.Error.Contains("cannot run '.ts' files")))
+                    {
+                        Console.WriteLine("NOTE skipped " + name + ": " + run.Error.Trim());
+                        continue;
+                    }
+
+                    if (run.Code == StoreStubExitCode && extension == ".py")
+                    {
+                        Console.WriteLine("NOTE skipped " + name + ": python.exe is the Microsoft Store stub, and no py.exe is installed");
+                        continue;
+                    }
+
+                    Assert(run.Code == ScriptExitCode, name + " exit code " + run.Code + ": " + run.Error);
+                    Assert(run.Output.Trim() == "a|b c", name + " arguments: " + run.Output + run.Error);
+                }
+            });
+            Test("an old Node fails a TypeScript script with its version", () =>
+            {
+                var directory = Path.Combine(root, "old node");
+                Directory.CreateDirectory(directory);
+                foreach (var file in Directory.GetFiles(Path.GetDirectoryName(Self)!))
+                {
+                    File.Copy(file, Path.Combine(directory, Path.GetFileName(file)));
+                }
+
+                File.Copy(Path.Combine(directory, Path.GetFileName(Self)), Path.Combine(directory, "node.exe"));
+                var script = Path.Combine(directory, "typed.ts");
+                File.WriteAllText(script, "const x: number = 1;\n");
+                var run = Run(launcher, "--env " + Quote("PATH=" + directory) + " -- " + Quote(script));
+                Assert(run.Code == LaunchFailureExitCode && run.Error.Contains(OldNodeVersion) && run.Error.Contains("22.18.0"), "old node: " + run.Error);
+            });
+            Test("a file no engine runs and that is no program fails clearly", () =>
+            {
+                var module = Path.Combine(root, "module.psm1");
+                File.WriteAllText(module, "function Get-Nothing {}\n");
+                var run = Run(launcher, "-- " + Quote(module));
+                Assert(run.Code == LaunchFailureExitCode && run.Error.Contains("extension.psm1") && run.Error.Contains("--engine"), "psm1: " + run.Error);
+                var text = Path.Combine(root, "forced.txt");
+                File.WriteAllText(text, "console.log(process.argv.slice(2).join('|')); process.exit(4);\n");
+                var refused = Run(launcher, "--engine node -- " + Quote(text));
+                Assert(refused.Code == LaunchFailureExitCode && refused.Error.Contains("--force-engine") && refused.Error.Contains(".txt"), "mismatch: " + refused.Error);
+                var forced = Run(launcher, "--engine node --force-engine -- " + Quote(text) + " x \"y z\"");
+                if (forced.Code == LaunchFailureExitCode && forced.Error.Contains("interpreter was not found"))
+                {
+                    Console.WriteLine("NOTE --force-engine run skipped: " + forced.Error.Trim());
+                    return;
+                }
+
+                Assert(forced.Code == 4 && forced.Output.Trim() == "x|y z", "--force-engine: " + forced.Code + " " + forced.Output + forced.Error);
+            });
+            Test("config: user engines, layers, get, set, add, unset and list", () =>
+            {
+                var home = Path.Combine(root, "config home");
+                Dictionary<string, string> environment = new()
+                {
+                    ["APPDATA"] = Path.Combine(home, "appdata"),
+                    ["ProgramData"] = Path.Combine(home, "programdata")
+                };
+                var global = Path.Combine(home, "appdata", "headless-run", "config.json");
+                var system = Path.Combine(home, "programdata", "headless-run", "config.json");
+                (int Code, string Output, string Error) Config(string arguments, string? directory = null)
+                {
+                    return Run(launcher, "config " + arguments, directory: directory, environment: environment);
+                }
+
+                void Ok(string arguments)
+                {
+                    var result = Config(arguments);
+                    Assert(result.Code == 0, "config " + arguments + ": " + result.Code + " " + result.Error);
+                }
+
+                Ok("--system engine.probe.path " + Quote(Self));
+                Ok("--system engine.probe.arguments child");
+                Ok("--system --add engine.probe.arguments script");
+                Ok("--system --add engine.probe.arguments system");
+                Ok("--system extension.probe probe");
+                var script = Path.Combine(home, "run me.probe");
+                File.WriteAllText(script, "");
+                (int Code, string Output, string Error) Probe(string options = "", string? directory = null)
+                {
+                    return Run(launcher, options + "-- " + Quote(script) + " a \"b c\"", directory: directory, environment: environment);
+                }
+
+                var run = Probe();
+                Assert(run.Code == ScriptExitCode && run.Output == "system|run me.probe|a|b c\n", "system engine: " + run.Output + run.Error);
+                // A global value replaces the system one, key by key.
+                Ok("engine.probe.arguments child");
+                Ok("--add engine.probe.arguments script");
+                Ok("--global --add engine.probe.arguments global");
+                Assert(File.Exists(global), "writes default to --global");
+                Assert(Probe().Output == "global|run me.probe|a|b c\n", "global over system");
+                var file = Path.Combine(home, "project.json");
+                File.WriteAllText(file, "{\"engine\": {\"probe\": {\"arguments\": [\"child\", \"script\", \"file\"]}}}");
+                Assert(Probe("--config project.json ", home).Output == "file|run me.probe|a|b c\n", "--config over global, relative to the launcher's directory");
+                var get = Config("engine.probe.arguments");
+                Assert(get.Code == 0 && get.Output == "child\nscript\nglobal\n", "get: " + get.Output);
+                Assert(Config("--system engine.probe.arguments").Output == "child\nscript\nsystem\n", "get from one scope");
+                Assert(Config("engine.probe.quoteCommand").Code == ConfigKeyNotFound, "get of an unset key");
+                var list = Config("--list --show-origin");
+                Assert(list.Code == 0 && list.Output.Contains("builtin\tengine.node.path=node.exe\n")
+                    && list.Output.Contains("file:" + global + "\tengine.probe.arguments=global\n")
+                    && list.Output.Contains("file:" + system + "\textension.probe=probe\n"), "list: " + list.Output);
+                Assert(Config("--file " + Quote(file) + " --list").Output == "engine.probe.arguments=child\nengine.probe.arguments=script\nengine.probe.arguments=file\n", "list one file");
+                Ok("engine.probe.extensions py,.Probe");
+                Assert(Config("engine.probe.extensions").Output == ".py\n.probe\n", "extensions split and lowered");
+                Assert(File.ReadAllText(global).IndexOf("\"$schema\"", StringComparison.Ordinal) < File.ReadAllText(global).IndexOf("\"engine\"", StringComparison.Ordinal), "key order kept");
+                Assert(Config("--unset engine.probe.arguments").Code == 0, "unset a key");
+                Assert(Probe().Output == "system|run me.probe|a|b c\n", "unset falls back to system");
+                Assert(Config("--unset engine.probe").Code == 0 && Config("--unset engine.probe").Code == ConfigNothingToUnset, "unset an engine");
+                foreach (var bad in new[] { "bogus.key 1", "engine.probe.quoteCommand maybe", "engine.probe.extensions .a.b", "--add extension.probe x", "--global --system --list", "--list --edit", "--show-origin engine.probe.path", "--frobnicate", "--file", "engine.probe.path a b" })
+                {
+                    var refused = Config(bad);
+                    Assert(refused.Code == LaunchFailureExitCode && refused.Error.Contains("headless-run:"), "config " + bad + ": " + refused.Code + " " + refused.Error);
+                }
+
+                File.WriteAllText(file, "{\"engine\": {\"probe\": {\"argument\": []}}}");
+                var malformed = Probe("--config " + Quote(file) + " ");
+                Assert(malformed.Code == LaunchFailureExitCode && malformed.Error.Contains(file) && malformed.Error.Contains("engine.probe.argument"), "unknown key: " + malformed.Error);
+                File.WriteAllText(file, "{\"engine\": ");
+                malformed = Probe("--config " + Quote(file) + " ");
+                Assert(malformed.Code == LaunchFailureExitCode && malformed.Error.Contains("line 1"), "invalid JSON: " + malformed.Error);
+                var missing = Probe("--config " + Quote(Path.Combine(home, "absent.json")) + " ");
+                Assert(missing.Code == LaunchFailureExitCode && missing.Error.Contains("absent.json"), "missing --config: " + missing.Error);
+                Ok("--system engine.broken.path " + Quote(Path.Combine(home, "absent.exe")));
+                var broken = Probe("--engine broken --force-engine ");
+                Assert(broken.Code == LaunchFailureExitCode && broken.Error.Contains("engine.broken.path") && broken.Error.Contains("file:" + system), "missing interpreter: " + broken.Error);
+                var unknown = Probe("--engine nothing ");
+                Assert(unknown.Code == LaunchFailureExitCode && unknown.Error.Contains("Known engines:") && unknown.Error.Contains("probe"), "unknown engine: " + unknown.Error);
+            });
+            Test("config --edit creates, opens and validates the file", () =>
+            {
+                var home = Path.Combine(root, "edit home");
+                var file = Path.Combine(home, "edited.json");
+                Dictionary<string, string> environment = new()
+                {
+                    ["HEADLESS_RUN_EDITOR"] = Quote(Self) + " child edit"
+                };
+                var edit = Run(launcher, "config --file " + Quote(file) + " --edit", environment: environment);
+                Assert(edit.Code == 0, "edit: " + edit.Error);
+                var get = Run(launcher, "config --file " + Quote(file) + " engine.edited.path");
+                Assert(get.Output == "edited.exe\n", "edited value: " + get.Output + get.Error);
+                environment["HEADLESS_RUN_EDITOR"] = Quote(Self) + " child edit-broken";
+                var broken = Run(launcher, "config --file " + Quote(file) + " --edit", environment: environment);
+                Assert(broken.Code == LaunchFailureExitCode && broken.Error.Contains("line 4"), "broken edit: " + broken.Error);
+                File.Delete(file);
+                environment["HEADLESS_RUN_EDITOR"] = "cmd /c exit 0";
+                Assert(Run(launcher, "config --file " + Quote(file) + " --edit", environment: environment).Code == 0, "skeleton");
+                Assert(File.ReadAllText(file).Contains("\"$schema\""), "new file has $schema");
+                // config is a subcommand only as the first argument.
+                var program = Run(launcher, "-- config --list");
+                Assert(program.Code == LaunchFailureExitCode && !program.Output.Contains("engine."), "config after --: " + program.Output);
             });
             Test("launch and usage failures produce diagnostics", () =>
             {
-                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--tray --detach -- x", "--tray=yes -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0" })
+                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--tray --detach -- x", "--tray=yes -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0", "--force-engine -- x", "--engine -- x", "--engine= -- x", "--engine nope -- x.js", "--config " + Quote(Path.Combine(root, "absent.json")) + " -- " + Quote(Self) + " child exit 0", "--force-engine=yes -- x" })
                 {
                     var run = Run(launcher, command);
                     Assert(run.Code == LaunchFailureExitCode && run.Error.Contains("headless-run:"), "missing failure: " + command);
@@ -569,6 +799,16 @@ internal static class Program
                 Thread.Sleep(DetachedChildDelayMilliseconds);
                 PublishMarker(args[1], "done");
                 return 0;
+            case "script":
+                // An engine's interpreter: its engine arguments, then the script (by file name), then the script's arguments.
+                Console.Write(string.Join("|", args[1..].Select(argument => File.Exists(argument) ? Path.GetFileName(argument) : argument)) + "\n");
+                return ScriptExitCode;
+            case "edit":
+                File.WriteAllText(args[^1], "{\"engine\": {\"edited\": {\"path\": \"edited.exe\"}}}");
+                return 0;
+            case "edit-broken":
+                File.WriteAllText(args[^1], "{\n  \"engine\": {\n    \"edited\": \n  }\n}");
+                return 0;
             default:
                 throw new ArgumentException("Unknown helper command");
         }
@@ -742,7 +982,8 @@ internal static class Program
             return false;
         }
     }
-    private static Process Start(string executable, string arguments, bool relay = false, string? input = null, string? directory = null)
+    private static Process Start(string executable, string arguments, bool relay = false, string? input = null, string? directory = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         ProcessStartInfo start = new(executable)
         {
@@ -753,6 +994,14 @@ internal static class Program
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        // The launcher's config files live under these, so no test ever reads or writes the machine's own.
+        start.Environment["APPDATA"] = Path.Combine(root, "appdata");
+        start.Environment["ProgramData"] = Path.Combine(root, "programdata");
+        foreach (var (name, value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[name] = value;
+        }
+
         if (relay)
         {
             // The launcher's test seam: --elevate takes its full relay path with the "open" verb, so no UAC prompt.
@@ -773,9 +1022,10 @@ internal static class Program
 
         return process;
     }
-    private static (int Code, string Output, string Error) Run(string executable, string arguments, bool relay = false, string? input = null, string? directory = null)
+    private static (int Code, string Output, string Error) Run(string executable, string arguments, bool relay = false, string? input = null, string? directory = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
-        using var process = Start(executable, arguments, relay, input, directory);
+        using var process = Start(executable, arguments, relay, input, directory, environment);
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit(LaunchTimeoutMilliseconds))

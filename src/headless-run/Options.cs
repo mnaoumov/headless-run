@@ -9,7 +9,7 @@ internal sealed class Options
     private const int SECONDS_IN_MINUTE = 60;
     private const int MINUTES_IN_HOUR = 60;
     private const int BackslashesInEscapedPair = 2;
-    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority", "--elevated-relay"];
+    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority", "--elevated-relay", "--engine", "--config"];
     private static readonly Dictionary<string, uint> PriorityClasses = new(StringComparer.Ordinal)
     {
         ["idle"] = Native.IdlePriorityClass,
@@ -25,7 +25,9 @@ internal sealed class Options
     public bool Append;
     public bool Detach;
     public bool CreateDirectory;
-    public bool WindowsPowerShell;
+    public string? Engine;
+    public bool ForceEngine;
+    public string? ConfigFile;
     public bool Elevate;
     public bool Tray;
     public bool EventLog;
@@ -106,9 +108,17 @@ internal sealed class Options
                 case "--elevated-relay":
                     ElevatedRelay = ReadValue(flag);
                     break;
-                case "--windows-powershell":
-                    WindowsPowerShell = true;
+                case "--engine":
+                    Engine = ReadValue(flag);
                     break;
+                case "--force-engine":
+                    ForceEngine = true;
+                    break;
+                case "--config":
+                    ConfigFile = ReadValue(flag);
+                    break;
+                case "--windows-powershell":
+                    throw new ArgumentException("--windows-powershell was removed in 2.0.0: pass --engine powershell instead.");
                 case "--priority":
                     var priority = ReadValue(flag);
                     if (!PriorityClasses.TryGetValue(priority, out PriorityClass))
@@ -154,6 +164,11 @@ internal sealed class Options
         if (Detach && Timeout != uint.MaxValue)
         {
             throw new ArgumentException("--detach cannot be combined with --timeout.");
+        }
+
+        if (ForceEngine && Engine is null)
+        {
+            throw new ArgumentException("--force-engine needs --engine NAME.");
         }
 
         if (Detach && Tray)
@@ -210,7 +225,7 @@ internal sealed class Options
         return (uint) Math.Ceiling(amount * multiplier);
     }
 
-    private static void SkipSpace(string text, ref int position)
+    internal static void SkipSpace(string text, ref int position)
     {
         while (position < text.Length && text[position] is ' ' or '\t')
         {
@@ -219,7 +234,7 @@ internal sealed class Options
     }
 
     // Windows quote/backslash rules, used ONLY for our own option prefix.
-    private static string ReadToken(string text, ref int position)
+    internal static string ReadToken(string text, ref int position)
     {
         SkipSpace(text, ref position);
         StringBuilder value = new();
