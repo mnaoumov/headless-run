@@ -27,7 +27,8 @@ internal static class BuiltInEngines
         ("lua", ["lua.exe"], [], [".lua"], false),
         ("rscript", ["Rscript.exe"], [], [".r"], false),
         ("tclsh", ["tclsh.exe"], [], [".tcl"], false),
-        ("bash", [@"%ProgramFiles%\Git\bin\bash.exe", @"%LOCALAPPDATA%\Programs\Git\bin\bash.exe", @"%USERPROFILE%\scoop\apps\git\current\bin\bash.exe"], [], [".sh"], false),
+        // %ProgramW6432% is the 64-bit Program Files even in the x86 build, where %ProgramFiles% is the (x86) one.
+        ("bash", [@"%ProgramW6432%\Git\bin\bash.exe", @"%ProgramFiles%\Git\bin\bash.exe",@"%LOCALAPPDATA%\Programs\Git\bin\bash.exe", @"%USERPROFILE%\scoop\apps\git\current\bin\bash.exe"], [], [".sh"], false),
         ("cscript", [@"%SystemRoot%\System32\cscript.exe"], ["//nologo"], [".vbs", ".wsf", ".js"], false)
     ];
     // The engine each extension runs under when no --engine is given.
