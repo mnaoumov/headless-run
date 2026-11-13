@@ -153,7 +153,7 @@ All launcher options precede `--`. Values use Windows double-quote/backslash rul
 12. `--force-engine`: with `--engine`, run the program even when the engine does not accept its extension.
 13. `--config FILE`: read engines from this file too, over the system and global ones. See [Configuration](#configuration).
 14. `--elevate`: run the child elevated, as an administrator. See [Elevation](#elevation).
-15. `--tray`: show a notification-area icon while the job runs, to view its output, open its logs or stop it. See [Tray icon](#tray-icon).
+15. `--tray[=true|false|auto]`: a notification-area icon while the job runs, to view its output, open its logs or stop it. The default, `auto`, shows it for a run started on a desktop and not under Task Scheduler, a service or `--detach`. See [Tray icon](#tray-icon).
 16. `--event-log`: write the run's outcome to the Windows Application event log. See [Event log](#event-log).
 17. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
 18. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
@@ -194,14 +194,22 @@ Caveats:
 
 ## Tray icon
 
-`--tray` is opt-in, so an unattended scheduled task stays invisible by default. While the launcher waits on its job, it shows one icon of its own in the notification area, with the command line as its tooltip; several jobs show several icons. Right-click it for the menu:
+While the launcher waits on its job, it can show one icon of its own in the notification area, with the command line as its tooltip; several jobs show several icons. `--tray` takes an optional inline value:
+
+1. `--tray=auto`, the default: the icon is shown when a person runs the launcher on their desktop, and not when the run has no visible desktop (session 0, a service, a task that runs whether or not the user is logged on), when Task Scheduler started it (its service process is an ancestor, directly or through the script its task runs), or with `--detach`. A scheduled task stays invisible with no flag to remember.
+2. `--tray` or `--tray=true`: always show it.
+3. `--tray=false`: never show it, for example from a script started by hand that should stay silent.
+
+Right-click the icon for the menu:
 
 1. The command line, the start time and the child's process id.
 2. **Show output** / **Hide output**: a read-only window with the job's output, also toggled by double-clicking the icon. Closing that window only hides it; the job keeps running.
 3. **Open stdout log** / **Open stderr log**: open a `--stdout` or `--stderr` file in its default application.
 4. **Stop**: terminate the whole job tree. The launcher returns 130 and writes a diagnostic to stderr.
 
-When the job ends, the icon changes, a notification shows the exit code, and the icon stays for 5 seconds with the code in its menu and a **Dismiss** item that ends the wait at once. Only `--tray` runs pay those seconds; the exit code is the child's, as without the option. A job stopped from the menu ends at once.
+When an explicit `--tray` job ends, the icon changes, a notification shows the exit code, and the icon stays for 5 seconds with the code in its menu and a **Dismiss** item that ends the wait at once. Only explicit `--tray` runs pay those seconds; the exit code is the child's, as without the option. Under `--tray=auto` the icon goes as soon as the job ends, with no notification, so a run from a terminal returns as fast as before and its exit code is in that terminal. A job stopped from the menu ends at once.
+
+Under `--tray=auto` the icon is a convenience: if there is no notification area to add it to, the job runs on without it and nothing is reported. An explicit `--tray` reports that on stderr.
 
 The output window shows the last 256K characters of both streams together, decoded as UTF-8:
 
@@ -212,8 +220,8 @@ The child still runs with `CREATE_NO_WINDOW`. Starting it with a hidden console 
 
 With other options:
 
-1. `--timeout` works unchanged; the icon shows the timeout, and 124 is returned after the 5 seconds.
-2. `--detach` cannot combine with `--tray`: a detached launcher exits at once, so nothing is left to show the job. The combination is a launcher failure (125).
+1. `--timeout` works unchanged; the icon shows the timeout, and with an explicit `--tray` 124 is returned after the 5 seconds.
+2. `--detach` cannot combine with `--tray` or `--tray=true`: a detached launcher exits at once, so nothing is left to show the job. The combination is a launcher failure (125). Under the default `--tray=auto`, `--detach` simply shows no icon.
 3. `--elevate`: the unelevated caller shows the icon and the output, since every relayed byte passes through it. **Stop** ends the caller with 130, and the elevated copy then terminates the tree, as it does when the caller is killed. The menu shows no process id, because the caller cannot see inside the elevated job.
 4. Without a notification area, as in a service or session 0, the launcher writes a diagnostic and the job runs on without the icon.
 

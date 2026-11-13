@@ -19,6 +19,9 @@ internal static class Program
     private const int JobObjectBasicLimitInformation = 2;
     private const uint JobObjectLimitPriorityClass = 0x20;
     private const string RelayWithoutUacVariable = "HEADLESS_RUN_TEST_RELAY_WITHOUT_UAC";
+    private const string SchedulerProcessVariable = "HEADLESS_RUN_TEST_SCHEDULER_PID";
+    private const string TrayReportVariable = "HEADLESS_RUN_TEST_TRAY_REPORT";
+    private const string NoSchedulerProcess = "0";
     private const int StoppedExitCode = 130;
     private const string TrayWindowClass = "HeadlessRunTray";
     private const string ViewerWindowClass = "HeadlessRunOutput";
@@ -716,6 +719,94 @@ internal static class Program
                 Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "caller did not exit after Dismiss");
                 Assert(process.ExitCode == 5 && output.GetAwaiter().GetResult() == "relayed line\n", "elevated tray relay: " + process.ExitCode + " " + error.GetAwaiter().GetResult());
             });
+            Test("--tray=auto: off under Task Scheduler, --detach and --tray=false; on only for an interactive desktop", () =>
+            {
+                Dictionary<string, string> report = new()
+                {
+                    [TrayReportVariable] = "1"
+                };
+                (int Code, string Output, string Error) Reported(string arguments, bool scheduler = true)
+                {
+                    Dictionary<string, string> environment = new(report);
+                    if (!scheduler)
+                    {
+                        environment[SchedulerProcessVariable] = NoSchedulerProcess;
+                    }
+
+                    return Run(launcher, arguments + " -- " + Quote(Self) + " child exit 3", environment: environment);
+                }
+
+                void Expect(string arguments, string decision, bool scheduler = true)
+                {
+                    var run = Reported(arguments, scheduler);
+                    Assert(run.Code == 3 && run.Error.Contains("headless-run: tray " + decision + "\n"), "'" + arguments + "': " + run.Code + " " + run.Error);
+                }
+
+                // The harness is the Task Scheduler stand-in; session 0 decides off before the scheduler is asked.
+                if (Environment.UserInteractive && Process.GetCurrentProcess().SessionId != 0)
+                {
+                    Expect("", "off: auto, started by Task Scheduler");
+                    Expect("--tray=auto", "off: auto, started by Task Scheduler");
+                }
+
+                Expect("--tray=false", "off: --tray=false");
+                Expect("--tray=false", "off: --tray=false", scheduler: false);
+                var marker = Path.Combine(root, "tray-auto-detached.txt");
+                var detached = Run(launcher, "--detach -- " + Quote(Self) + " child later " + Quote(marker), environment: report);
+                Assert(detached.Code == 0 && detached.Error.Contains("tray off: auto, --detach"), "auto --detach: " + detached.Error);
+                WaitFor(() => File.Exists(marker), "detached child did not finish");
+                Assert(Run(launcher, "--tray=true --detach -- " + Quote(Self) + " child exit 0").Code == LaunchFailureExitCode, "--tray=true --detach");
+                foreach (var bad in new[] { "--tray=", "--tray=yes", "--tray=TRUE" })
+                {
+                    var refused = Run(launcher, bad + " -- " + Quote(Self) + " child exit 0");
+                    Assert(refused.Code == LaunchFailureExitCode && refused.Error.Contains("--tray accepts"), bad + ": " + refused.Error);
+                }
+
+                // With no scheduler ancestor the answer is this session's: on only on a visible desktop.
+                var interactive = Process.GetCurrentProcess().SessionId != 0 && Environment.UserInteractive;
+                var clock = Stopwatch.StartNew();
+                var free = Reported("", scheduler: false);
+                Assert(free.Code == 3, "auto exit code " + free.Code + " " + free.Error);
+                Assert(free.Error.Contains(interactive ? "tray on: auto, interactive desktop" : "tray off: auto, "), "auto decision: " + free.Error);
+                Assert(!free.Error.Contains("could not be added"), "auto reported a missing notification area: " + free.Error);
+                Assert(clock.ElapsedMilliseconds < TrayLingerMilliseconds - LingerToleranceMilliseconds, "auto lingered: " + clock.ElapsedMilliseconds + " ms");
+                if (!interactive)
+                {
+                    Console.WriteLine("NOTE not on an interactive desktop; the auto icon itself is checked only there");
+                    return;
+                }
+
+                Dictionary<string, string> noScheduler = new()
+                {
+                    [SchedulerProcessVariable] = NoSchedulerProcess
+                };
+                var treeMarker = Path.Combine(root, "tray-auto.pids");
+                using var process = Start(launcher, "-- " + Quote(Self) + " child tree " + Quote(treeMarker) + " tray", environment: noScheduler);
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                WaitFor(() => File.Exists(treeMarker) && File.ReadAllText(treeMarker).Contains(','), "tree not ready");
+                var tray = TrayWindow(process.Id);
+                SendMessage(tray, WmCommand, TrayCommandStop, 0);
+                Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds), "launcher did not exit after Stop");
+                Assert(process.ExitCode == StoppedExitCode, "auto stop exit code " + process.ExitCode + " " + error.GetAwaiter().GetResult());
+                output.GetAwaiter().GetResult();
+            });
+            Test("--tray=auto: the harness's own runs show no icon", () =>
+            {
+                var marker = Path.Combine(root, "tray-auto-scheduled.pids");
+                using var process = Start(launcher, "--timeout 3s -- " + Quote(Self) + " child tree " + Quote(marker) + " tray");
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                // Watched until the timeout ends the run, so an icon added late is still caught.
+                while (!process.WaitForExit(ConditionPollMilliseconds))
+                {
+                    Assert(FindOwnedWindow(TrayWindowClass, process.Id) == 0, "a launcher under the scheduler stand-in shows an icon");
+                }
+
+                Assert(File.Exists(marker), "the child did not start");
+                Assert(process.ExitCode == TimeoutExitCode, "scheduled exit code " + process.ExitCode + " " + error.GetAwaiter().GetResult());
+                output.GetAwaiter().GetResult();
+            });
             Console.WriteLine($"PASS: {passed} integration groups");
             return 0;
         }
@@ -997,6 +1088,8 @@ internal static class Program
         // The launcher's config files live under these, so no test ever reads or writes the machine's own.
         start.Environment["APPDATA"] = Path.Combine(root, "appdata");
         start.Environment["ProgramData"] = Path.Combine(root, "programdata");
+        // --tray=auto's seam: this harness stands in for Task Scheduler, so a launcher without --tray shows no icon.
+        start.Environment[SchedulerProcessVariable] = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
         foreach (var (name, value) in environment ?? new Dictionary<string, string>())
         {
             start.Environment[name] = value;

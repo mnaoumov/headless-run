@@ -9,6 +9,7 @@ internal sealed class Options
     private const int SECONDS_IN_MINUTE = 60;
     private const int MINUTES_IN_HOUR = 60;
     private const int BackslashesInEscapedPair = 2;
+    private const string TrayOption = "--tray";
     private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority", "--elevated-relay", "--engine", "--config"];
     private static readonly Dictionary<string, uint> PriorityClasses = new(StringComparer.Ordinal)
     {
@@ -29,6 +30,8 @@ internal sealed class Options
     public bool ForceEngine;
     public string? ConfigFile;
     public bool Elevate;
+    public TrayMode TrayMode = TrayMode.Auto;
+    // Whether this launcher shows the icon: TrayMode, with auto decided by TrayAuto.Resolve.
     public bool Tray;
     public bool EventLog;
     public string? ElevatedRelay;
@@ -68,7 +71,7 @@ internal sealed class Options
             {
                 inlineValue = flag[(equals + 1)..];
                 flag = flag[..equals];
-                if (!ValueOptions.Contains(flag))
+                if (!ValueOptions.Contains(flag) && flag != TrayOption)
                 {
                     throw new ArgumentException($"Option '{flag}' does not accept '=VALUE'. Use --help.");
                 }
@@ -99,8 +102,15 @@ internal sealed class Options
                 case "--elevate":
                     Elevate = true;
                     break;
-                case "--tray":
-                    Tray = true;
+                case TrayOption:
+                    // The value is optional and only inline, so "--tray -- x" still means on.
+                    TrayMode = inlineValue switch
+                    {
+                        null or "true" => TrayMode.On,
+                        "false" => TrayMode.Off,
+                        "auto" => TrayMode.Auto,
+                        _ => throw new ArgumentException($"--tray accepts true, false or auto; got '{inlineValue}'.")
+                    };
                     break;
                 case "--event-log":
                     EventLog = true;
@@ -171,7 +181,7 @@ internal sealed class Options
             throw new ArgumentException("--force-engine needs --engine NAME.");
         }
 
-        if (Detach && Tray)
+        if (Detach && TrayMode == TrayMode.On)
         {
             throw new ArgumentException("--detach cannot be combined with --tray: a detached launcher exits at once, so nothing is left to show the job.");
         }
