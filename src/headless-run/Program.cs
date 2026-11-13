@@ -50,6 +50,9 @@ internal static class Program
 
                 return 0;
             }
+
+            // The launcher that hosts the icon decides; an elevated copy never shows one.
+            options.Tray = options.ElevatedRelay is null && TrayAuto.Resolve(options);
             if (Elevation.Required(options))
             {
                 code = Elevation.Run(options);
@@ -204,7 +207,8 @@ internal static class Program
             outputTee?.Start();
             errorTee?.Start();
             using var tray = capture is null ? null : Tray.Start(new TrayJob(options.Tail, DateTime.Now, process.ProcessId,
-                options.Output, sharedFile ? null : options.Error, capture, message => Diagnose(diagnostics, capture, message)));
+                options.Output, sharedFile ? null : options.Error, capture, options.TrayMode == TrayMode.Auto,
+                message => Diagnose(diagnostics, capture, message)));
             List<nint> waits = [process.Process];
             var callerIndex = -1;
             var stopIndex = -1;
@@ -471,7 +475,10 @@ internal static class Program
         --force-engine        Use --engine even when it does not accept the extension
         --config FILE         Read engines from this file too, over the global ones
         --elevate             Run elevated, after a UAC prompt; streams are relayed
-        --tray                Tray icon while the job runs: show output, open logs, stop
+        --tray[=WHEN]         Tray icon while the job runs: show output, open logs, stop.
+                              WHEN is true (--tray alone), false or auto (default):
+                              auto shows it on a desktop run, not under Task Scheduler,
+                              a service, session 0 or --detach
         --event-log           Write the run's outcome to the Application event log
         --help                Print this help
         --version             Print version

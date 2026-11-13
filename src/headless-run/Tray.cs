@@ -4,9 +4,10 @@ using System.Runtime.InteropServices;
 
 namespace HeadlessRun;
 
-// The facts the --tray menu shows about one job.
+// The facts the --tray menu shows about one job. Quiet: --tray=auto chose the icon, so a missing
+// notification area is not reported, a failed start lets the job run on, and the finish does not linger.
 internal sealed record TrayJob(string CommandLine, DateTime Started, uint? ProcessId, string? OutputLog, string? ErrorLog,
-    OutputCapture Capture, Action<string> Report);
+    OutputCapture Capture, bool Quiet, Action<string> Report);
 
 // --tray: one notification-area icon per launcher, on its own thread with its own message loop,
 // for as long as the launcher waits on its job. The hidden owner window's title carries the state
@@ -68,8 +69,8 @@ internal sealed unsafe class Tray : IDisposable
 
     public WaitHandle StopRequested => stopRequested;
 
-    // Starts the tray thread and returns once its windows exist.
-    public static Tray Start(TrayJob job)
+    // Starts the tray thread and returns once its windows exist; null when a quiet tray could not start.
+    public static Tray? Start(TrayJob job)
     {
         if (current is not null)
         {
@@ -82,13 +83,20 @@ internal sealed unsafe class Tray : IDisposable
         tray.ready.Wait();
         if (tray.failure is not null)
         {
+            current = null;
+            tray.Dispose();
+            if (job.Quiet)
+            {
+                return null;
+            }
+
             throw new InvalidOperationException("The tray icon could not start: " + tray.failure.Message, tray.failure);
         }
 
         return tray;
     }
 
-    // The job is over. A stopped job closes the tray at once; a finished one keeps the icon,
+    // The job is over. A stopped job, or a quiet tray, closes at once; a finished one keeps the icon,
     // with its exit code, for LingerMilliseconds or until Dismiss.
     public void Finish(int code, bool stopped)
     {
@@ -435,7 +443,7 @@ internal sealed unsafe class Tray : IDisposable
         exitCode = code;
         Refresh(false);
         TrayNative.SetWindowText(window, Title("exited " + code.ToString(CultureInfo.InvariantCulture)));
-        if (stopped)
+        if (stopped || job.Quiet)
         {
             Close();
             return;
@@ -479,7 +487,7 @@ internal sealed unsafe class Tray : IDisposable
     {
         var data = IconData(TrayNative.NifMessage | TrayNative.NifIcon | TrayNative.NifTip, TrayNative.IdiApplication, "headless-run: " + job.CommandLine);
         iconAdded = TrayNative.NotifyIcon(TrayNative.NimAdd, ref data);
-        if (!iconAdded && !iconReported)
+        if (!iconAdded && !iconReported && !job.Quiet)
         {
             // No notification area (no Explorer, or a non-interactive session): the job runs on without the icon.
             iconReported = true;

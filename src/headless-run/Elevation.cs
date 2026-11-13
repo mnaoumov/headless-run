@@ -118,7 +118,7 @@ internal static class Elevation
             }
 
             using var tray = capture is null ? null : Tray.Start(new TrayJob(options.Tail, DateTime.Now, null, options.Output,
-                sharedFile ? null : options.Error, capture, message =>
+                sharedFile ? null : options.Error, capture, options.TrayMode == TrayMode.Auto, message =>
                 {
                     Program.Report(options, message);
                     capture.Note($"headless-run: {message}\n");
@@ -233,7 +233,7 @@ internal static class Elevation
     }
 
     // A UAC prompt needs a visible window station; services and S4U tasks have none.
-    private static bool InteractiveWindowStation()
+    internal static bool InteractiveWindowStation()
     {
         var station = Native.GetProcessWindowStation();
         return station != 0
