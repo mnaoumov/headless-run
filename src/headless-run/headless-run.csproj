@@ -3,6 +3,12 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>headless-run</AssemblyName>
     <Version>1.0.0</Version>
+    <Product>headless-run</Product>
+    <Company>mnaoumov</Company>
+    <Authors>mnaoumov</Authors>
+    <Copyright>Copyright (c) 2026 mnaoumov</Copyright>
+    <AssemblyTitle>headless-run</AssemblyTitle>
+    <Description>Runs a Windows console program without a console window.</Description>
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SupportedOSPlatformVersion>10.0</SupportedOSPlatformVersion>
