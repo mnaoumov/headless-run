@@ -6,7 +6,16 @@ The launcher is a Windows-subsystem executable. It starts console programs with 
 
 ## Install
 
-Download `headless-run-win-x64.exe`, `headless-run-win-x86.exe` or `headless-run-win-arm64.exe` from [Releases](https://github.com/mnaoumov/headless-run/releases), verify it against the adjacent `.sha256` file, and rename it to `headless-run.exe` in a directory on `PATH`.
+With [Scoop](https://scoop.sh), from the author's bucket:
+
+```powershell
+scoop bucket add mnaoumov https://github.com/mnaoumov/scoop-bucket
+scoop install mnaoumov/headless-run
+```
+
+For a scheduled task, `~\scoop\apps\headless-run\current\headless-run.exe` is the full path to use, and it stays the same across `scoop update`.
+
+Or download `headless-run-win-x64.exe`, `headless-run-win-x86.exe` or `headless-run-win-arm64.exe` from [Releases](https://github.com/mnaoumov/headless-run/releases), verify it against the adjacent `.sha256` file, and rename it to `headless-run.exe` in a directory on `PATH`.
 
 The binaries are unsigned; Windows may ask you to confirm a downloaded executable.
 
