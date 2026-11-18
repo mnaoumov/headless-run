@@ -47,6 +47,9 @@ internal static class Program
     private const int ConfigNothingToUnset = 5;
     private const int StoreStubExitCode = 9009;
     private const string OldNodeVersion = "v20.11.0";
+    private const string ArgumentRecorderName = "tool";
+    private const string ArgumentRecordFile = "received.jsonl";
+    private const string ArgumentRecordVariable = "GREETING";
     [DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
     private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")]
@@ -88,6 +91,12 @@ internal static class Program
         if (args.Length != 0 && args[0] == "child")
         {
             return Child(args[1..]);
+        }
+
+        // A copy of this harness renamed tool.exe is the program the README's shell examples call.
+        if (string.Equals(Path.GetFileNameWithoutExtension(Self), ArgumentRecorderName, StringComparison.OrdinalIgnoreCase))
+        {
+            return RecordArguments(args);
         }
 
         // A copy of this harness renamed node.exe stands in for an old Node in the TypeScript gate test.
@@ -826,6 +835,20 @@ internal static class Program
 
             Directory.Delete(root, true);
         }
+    }
+
+    // One JSON line per call, appended to received.jsonl beside the copy: the arguments received and the GREETING variable.
+    // The file sits beside the copy rather than in a variable, so a call from WSL or Task Scheduler needs no environment plumbing.
+    private static int RecordArguments(string[] args)
+    {
+        var output = Path.Combine(Path.GetDirectoryName(Self)!, ArgumentRecordFile);
+        var record = JsonSerializer.Serialize(new
+        {
+            args,
+            greeting = Environment.GetEnvironmentVariable(ArgumentRecordVariable)
+        });
+        File.AppendAllText(output, record + "\n");
+        return 0;
     }
 
     private static int Child(string[] args)

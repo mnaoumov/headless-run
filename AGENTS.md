@@ -20,6 +20,8 @@ Run `dotnet format style <project> --diagnostics IDE0011 --verify-no-changes` an
 
 Run `pwsh -NoProfile -File scripts/test.ps1` on Windows. The dependency-free integration executable doubles as the real child-process fixture. Tests run serially; build parallelism is capped at two.
 
+The README's `## Calling it from a shell` blocks are tests: each `<!-- example: KIND -->` block runs as written through `scripts/test-shell-examples.ps1`, which `scripts/test.ps1` calls, with `C:\Tools` and `C:\Scripts` replaced by a temporary folder, and the `<!-- example-argv -->` list is what the harness copy named `tool.exe` must receive. Change an example and the list together, and run the script with `-Wsl -TaskScheduler` locally when you touch those two, since CI skips them.
+
 Run `dotnet publish src/headless-run -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64 -m:2` to build a native executable. NativeAOT requires the Visual Studio C++ toolchain. When it is unavailable locally, test the JIT build and use GitHub Actions for the native build. Always run the integration harness against the published executable too.
 
 ## Process lifetime and handles
