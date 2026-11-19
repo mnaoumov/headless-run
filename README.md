@@ -158,6 +158,20 @@ Invoke-Item -Path 'C:\Tools\tool.lnk', 'C:\Scripts\job.lnk'
 2. Windows expands `%NAME%` in the arguments when it opens the shortcut, so `%USERNAME%` reaches the child as the user's name. An unset `%NAME%` and a lone `%`, as in `100%`, stay as written.
 3. A shortcut holds at most 1,023 characters of arguments. `CreateShortcut` cuts a longer string to that length with no error, so a long call belongs in a `.cmd` file that the shortcut runs through `headless-run`.
 
+### Run dialog
+
+Type the whole line into the Run dialog (Win+R) and press Enter:
+
+```text
+C:\Tools\headless-run.exe --env "GREETING=hello world" -- "C:\Tools\My Tool\tool.exe" "hello world" "say \"hi\"" --verbose /quiet -- 100% a&b "C:\Log files\\"
+```
+
+1. The Run dialog passes the line the way a shortcut does: the same raw command line, `\"` for an embedded quote, a doubled backslash before a closing quote, and no shell operators, so `a&b` arrives as one argument.
+2. It expands `%NAME%` too: `%USERNAME%` reaches the child as the user's name, while an unset `%NAME%` and the lone `%` in `100%` stay as written.
+3. Its field holds at most 259 characters. A longer line is cut there with no error, so put a long call in a `.cmd` file or a shortcut.
+
+This example was checked by hand on Windows 11, since the test script cannot type into the Run dialog. Run from another folder, the line delivered the eight arguments listed above and the `GREETING` variable, with `%USERNAME%` and `%NO_SUCH_VAR%` appended to check the expansion.
+
 ### Code
 
 These start `headless-run` with an argument list, and each runtime quotes the list by Windows' rules, so the arguments are written as plain strings.
