@@ -210,6 +210,13 @@ $record = [pscustomobject]@{ name = $Name; dryRun = [bool] $DryRun; rest = @($ar
                     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
                 }
             }
+            'shortcut' {
+                # The example saves its .lnk files under the temporary C:\Tools and C:\Scripts, and opens them itself.
+                [System.IO.File]::WriteAllText($file + '.ps1', $code)
+                if ((Invoke-Raw -FileName 'pwsh.exe' -Arguments ('-NoProfile -NonInteractive -File "' + $file + '.ps1"') -Quiet) -ne 0) {
+                    throw 'creating or opening the shortcuts failed'
+                }
+            }
             'node' {
                 if (-not (Get-Command -Name 'node' -CommandType Application -ErrorAction SilentlyContinue)) {
                     $skip = 'node not found'

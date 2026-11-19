@@ -53,7 +53,7 @@ Where the example has a second line, it runs `C:\Scripts\job.ps1 -Name "nightly 
 
 The first `--` ends the launcher's options. The fifth argument, a second `--`, is part of the child's command line and reaches `tool.exe` like any other argument, since nothing after the first `--` is parsed by the launcher. Each shell below passes both of them through unchanged.
 
-`scripts/test-shell-examples.ps1` runs each example block in this section exactly as written, with `C:\Tools` and `C:\Scripts` pointed at a temporary folder, and checks what `tool.exe` and `job.ps1` received against the lists above. `scripts/test.ps1`, which CI runs, includes it for `cmd`, PowerShell 7, Windows PowerShell 5.1, Git Bash, Node, Python and C#, skipping a caller the machine lacks with a note. `-Wsl` and `-TaskScheduler` add the WSL and Task Scheduler examples, which were checked on Windows 11 with WSL 2 Ubuntu.
+`scripts/test-shell-examples.ps1` runs each example block in this section exactly as written, with `C:\Tools` and `C:\Scripts` pointed at a temporary folder, and checks what `tool.exe` and `job.ps1` received against the lists above. `scripts/test.ps1`, which CI runs, includes it for `cmd`, PowerShell 7, Windows PowerShell 5.1, Git Bash, a shortcut, Node, Python and C#, skipping a caller the machine lacks with a note. `-Wsl` and `-TaskScheduler` add the WSL and Task Scheduler examples, which were checked on Windows 11 with WSL 2 Ubuntu.
 
 ### `cmd.exe` prompt
 
@@ -138,6 +138,26 @@ Register-ScheduledTask -TaskName 'headless-run example' -Action $tool, $job
 2. Task Scheduler expands `%NAME%` in it when it runs the task, so `%USERNAME%` reaches the child as the user's name. A lone `%`, as in `100%`, stays.
 3. `schtasks /create /tr` takes the program and its arguments as one string, written inside `cmd`'s quotes with `\"` for each embedded quote. It refuses a string longer than 261 characters, and one close to that length can be stored cut short with no error: on Windows 11 a string of exactly 261 characters lost its last 8. The call above does not fit, so use `Register-ScheduledTask` or a task XML file instead.
 
+### Shortcut
+
+<!-- example: shortcut -->
+```powershell
+$shell = New-Object -ComObject WScript.Shell
+$tool = $shell.CreateShortcut('C:\Tools\tool.lnk')
+$tool.TargetPath = 'C:\Tools\headless-run.exe'
+$tool.Arguments = '--env "GREETING=hello world" -- "C:\Tools\My Tool\tool.exe" "hello world" "say \"hi\"" --verbose /quiet -- 100% a&b "C:\Log files\\"'
+$tool.Save()
+$job = $shell.CreateShortcut('C:\Scripts\job.lnk')
+$job.TargetPath = 'C:\Tools\headless-run.exe'
+$job.Arguments = '-- C:\Scripts\job.ps1 -Name "nightly run" -DryRun'
+$job.Save()
+Invoke-Item -Path 'C:\Tools\tool.lnk', 'C:\Scripts\job.lnk'
+```
+
+1. A shortcut's arguments, the part of its **Target** field after the program, are the raw command line after the program, as in a scheduled task: `\"` for an embedded quote, a doubled backslash before a closing quote, and no shell operators. `Invoke-Item` opens a shortcut as a double-click does.
+2. Windows expands `%NAME%` in the arguments when it opens the shortcut, so `%USERNAME%` reaches the child as the user's name. An unset `%NAME%` and a lone `%`, as in `100%`, stay as written.
+3. A shortcut holds at most 1,023 characters of arguments. `CreateShortcut` cuts a longer string to that length with no error, so a long call belongs in a `.cmd` file that the shortcut runs through `headless-run`.
+
 ### Code
 
 These start `headless-run` with an argument list, and each runtime quotes the list by Windows' rules, so the arguments are written as plain strings.
@@ -176,9 +196,9 @@ process.WaitForExit();
 
 1. **The launcher's `--`**: everything after the first `--` belongs to the child, including another `--`. No shell above removes either one.
 2. **Waiting**: a `cmd` prompt and PowerShell return before a Windows-subsystem program ends; use `start "" /wait` or pipe the output, as above.
-3. **`%`**: doubled in a batch file, expanded at a prompt when the variable is set, and expanded by Task Scheduler.
+3. **`%`**: doubled in a batch file, expanded at a prompt when the variable is set, and expanded by Task Scheduler and a shortcut.
 4. **Embedded quotes**: `\"` on every Windows command line, and in Windows PowerShell 5.1 even inside a single-quoted string; PowerShell 7, Git Bash, WSL and the code callers quote for you.
-5. **A trailing backslash before a closing quote**: doubled wherever you write the command line yourself (`cmd`, Windows PowerShell 5.1, Task Scheduler).
+5. **A trailing backslash before a closing quote**: doubled wherever you write the command line yourself (`cmd`, Windows PowerShell 5.1, Task Scheduler, a shortcut).
 6. **Path conversion in Git Bash**: `/quiet` and other slash-led arguments become Windows paths unless `MSYS_NO_PATHCONV=1` is set.
 7. **`schtasks /tr`**: at most 261 characters, and a string near that length can lose its end with no error.
 
