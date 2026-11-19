@@ -8,6 +8,8 @@ $repo = Split-Path $PSScriptRoot -Parent
 Push-Location $repo
 try {
     & (Join-Path $PSScriptRoot 'check-csharp-style.ps1')
+    # The release workflow's CHANGELOG.md check, against sample sections.
+    & (Join-Path $PSScriptRoot 'test-release-notes.ps1')
     if (-not $Launcher) {
         dotnet build src/headless-run -c Release --nologo -m:2
         if ($LASTEXITCODE -ne 0) {
