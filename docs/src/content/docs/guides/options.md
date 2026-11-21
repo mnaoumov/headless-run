@@ -23,7 +23,31 @@ All launcher options precede `--`. Values use Windows double-quote/backslash rul
 14. `--elevate`: run the child elevated, as an administrator. See [Elevation](/headless-run/guides/elevation/).
 15. `--tray[=true|false|auto]`: a notification-area icon while the job runs, to view its output, open its logs or stop it. The default, `auto`, shows it for a run started on a desktop and not under Task Scheduler, a service or `--detach`. See [Tray icon](/headless-run/guides/tray-icon/).
 16. `--event-log`: write the run's outcome to the Windows Application event log. See [Event log](/headless-run/guides/event-log/).
-17. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
-18. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
+17. `--echo`: start nothing, and show what the launcher received and what it would start. See [Checking what a caller passes](#checking-what-a-caller-passes).
+18. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
+19. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
 
 Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; the tool does not rotate logs.
+
+## Checking what a caller passes
+
+Put `--echo` first and keep the rest of the call as it is. The launcher parses its options as usual, resolves the engine and interpreter, and then starts nothing. It shows:
+
+1. the command line it received, and that line split into arguments;
+2. the child tail after `--`, forwarded unchanged;
+3. the engine and interpreter the tail's program picks, or that the program runs directly;
+4. the exact command line the child would be started with, split into the arguments a C program would receive;
+5. the `--cwd` directory and the `--env` overrides, when given.
+
+Each argument is shown in brackets, `3: [a b]`, so an empty argument and leading or trailing spaces stay visible. For a `.cmd` or `.bat` file the split shown is the tail's, since `cmd.exe` runs the tail as a command rather than splitting it.
+
+The text goes to the first place that can take it:
+
+1. the file named by `--stdout FILE`;
+2. a redirected standard output, such as `headless-run --echo -- tool.exe "a b" | more`;
+3. the console of the shell that started the launcher;
+4. a message box, when there is no console at all: a shortcut, the Run dialog or Explorer. Press Ctrl+C in it to copy its text.
+
+Under Task Scheduler with no desktop there is nowhere to show it, so pass `--stdout FILE` there. The exit code is 0, or 125 when the child command line cannot be built, for example when the engine's interpreter is not installed; the reason is then part of the text. `--echo` with no `--` shows the launcher's own arguments only.
+
+Because a Windows-subsystem program does not hold the console, the text printed to a console can appear after the shell's next prompt. Pipe it, as in item 2, or use `start "" /wait` in `cmd`, to keep it in order.

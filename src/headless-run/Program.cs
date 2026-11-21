@@ -51,6 +51,12 @@ internal static class Program
                 return 0;
             }
 
+            // Nothing is started, so nothing is elevated, shown in the tray or logged.
+            if (options.Echo)
+            {
+                return Echo.Run(options, commandLine);
+            }
+
             // The launcher that hosts the icon decides; an elevated copy never shows one.
             options.Tray = options.ElevatedRelay is null && TrayAuto.Resolve(options);
             if (Elevation.Required(options))
@@ -100,7 +106,7 @@ internal static class Program
             resources.Handle(caller);
         }
 
-        var (application, commandLine) = ResolveCommand(options);
+        var (application, commandLine, _) = ResolveCommand(options);
         PrepareWorkingDirectory(options);
         // Under --elevate the unelevated caller hosts the icon, so the elevated copy never shows a second one.
         var capture = options.Tray && caller == 0 ? new OutputCapture() : null;
@@ -295,18 +301,18 @@ internal static class Program
 
     // A native executable gets the raw tail unchanged. A script goes to its engine's interpreter,
     // which then applies its own argument rules to the same raw text.
-    private static (string? Application, string CommandLine) ResolveCommand(Options options)
+    internal static (string? Application, string CommandLine, Engine? Engine) ResolveCommand(Options options)
     {
         var extension = ProgramExtension(options.Tail);
         var engine = EngineTable.Load(options.ConfigFile).Select(options.Engine, extension, options.ForceEngine);
         if (engine is null)
         {
-            return (null, options.Tail);
+            return (null, options.Tail, null);
         }
 
         var interpreter = Interpreter.Find(engine, options.Environment);
         Interpreter.CheckTypeScript(engine, interpreter, extension);
-        return (interpreter, Interpreter.CommandLine(interpreter, engine, options.Tail));
+        return (interpreter, Interpreter.CommandLine(interpreter, engine, options.Tail), engine);
     }
 
     private static string ProgramExtension(string tail)
@@ -351,7 +357,7 @@ internal static class Program
         Directory.CreateDirectory(options.Directory);
     }
 
-    private static void CreateParentDirectory(string path)
+    internal static void CreateParentDirectory(string path)
     {
         var parent = Path.GetDirectoryName(Path.GetFullPath(path));
         if (parent is not null)
@@ -480,6 +486,8 @@ internal static class Program
                               auto shows it on a desktop run, not under Task Scheduler,
                               a service, session 0 or --detach
         --event-log           Write the run's outcome to the Application event log
+        --echo                Start nothing: show the arguments received and the child
+                              command line (stdout, the console, or a message box)
         --help                Print this help
         --version             Print version
         Value options also accept --name=VALUE. Output parent directories are created.
