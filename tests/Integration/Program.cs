@@ -50,11 +50,14 @@ internal static class Program
     private const string ArgumentRecorderName = "tool";
     private const string ArgumentRecordFile = "received.jsonl";
     private const string ArgumentRecordVariable = "GREETING";
-    private const string DialogWindowClass = "#32770";
+    private const string EchoWindowClass = "HeadlessRunEcho";
     private const string EchoCaption = "headless-run --echo";
-    private const int EchoTextCharacters = 8192;
-    private const int MessageBoxTextControl = 0xFFFF;
-    // A message box with only OK ends on IDCANCEL, as on Esc; a sent IDOK leaves it open.
+    // The --echo window's control ids, as EchoDialog.cs numbers them.
+    private const int EchoReportControl = 101;
+    private const int EchoLineControl = 102;
+    private const int EchoArgumentsControl = 103;
+    private const uint WmSetText = 0x000C;
+    // The --echo window closes on IDCANCEL, as on Esc or its Close button.
     private const nint DialogCancel = 2;
     [DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
     private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
@@ -545,22 +548,27 @@ internal static class Program
                 var failure = Run(launcher, "--echo --engine no-such-engine -- tool.exe");
                 Assert(failure.Code == LaunchFailureExitCode && failure.Output.Contains("cannot be built: Unknown engine"), "echo failure: " + failure.Output);
             });
-            Test("echo with no console shows a message box", () =>
+            Test("echo with no console shows a window whose command line re-splits as it is edited", () =>
             {
                 // The outer launcher has no console and hands the inner one NUL, as a shortcut or the Run dialog would.
                 using var process = Start(launcher, "--stdout NUL -- " + Quote(launcher) + " --echo -- tool.exe \"a b\"");
                 try
                 {
                     nint dialog = 0;
-                    WaitFor(() => (dialog = FindWindowEx(0, 0, DialogWindowClass, EchoCaption)) != 0, "no echo message box");
-                    // The dialog is findable while it is still being created: wait for its text control to be filled.
-                    var buffer = new char[EchoTextCharacters];
-                    var length = 0;
-                    WaitFor(() => (length = GetWindowText(GetDlgItem(dialog, MessageBoxTextControl), buffer, buffer.Length)) != 0, "echo message box has no text");
-                    var text = new string(buffer, 0, length);
+                    WaitFor(() => (dialog = FindWindowEx(0, 0, EchoWindowClass, EchoCaption)) != 0, "no echo window");
+                    // The window is findable while it is still being created: wait for its last box to be filled.
+                    WaitFor(() => ControlText(dialog, EchoArgumentsControl).Length != 0, "echo window has no argument list");
+                    var text = ControlText(dialog, EchoReportControl).Replace("\r\n", "\n");
+                    Assert(text.Contains("Child command line:") && text.Contains("Child arguments, as the C runtime splits them:\n  0: [tool.exe]\n  1: [a b]\n"), "echo report: " + text);
+                    var received = ControlText(dialog, EchoLineControl);
+                    Assert(received.EndsWith(" --echo -- tool.exe \"a b\"", StringComparison.Ordinal), "editable line: " + received);
+                    Assert(ControlText(dialog, EchoArgumentsControl).Replace("\r\n", "\n").EndsWith("  1: [--echo]\n  2: [--]\n  3: [tool.exe]\n  4: [a b]\n", StringComparison.Ordinal), "received arguments");
+                    // An edit is split again at once, by the C runtime's rule: backslashes before a quote halve.
+                    SendMessage(GetDlgItem(dialog, EchoLineControl), WmSetText, 0, ("tool.exe \"x  y\" a\\\\\"b c\" \"\" d\\\"e" + "\0").ToCharArray());
+                    var edited = ControlText(dialog, EchoArgumentsControl).Replace("\r\n", "\n");
+                    Assert(edited == "  0: [tool.exe]\n  1: [x  y]\n  2: [a\\b c]\n  3: []\n  4: [d\"e]\n", "edited arguments: " + edited);
                     SendMessage(dialog, WmCommand, DialogCancel, 0);
                     Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds) && process.ExitCode == 0, "outer launcher did not end cleanly");
-                    Assert(text.Contains("Child command line:") && text.Contains("Child arguments, as the C runtime splits them:\n  0: [tool.exe]\n  1: [a b]\n") && text.Contains("Ctrl+C copies"), "message box text: " + text);
                 }
                 finally
                 {
@@ -1132,7 +1140,18 @@ internal static class Program
 
     private static string ViewerText(nint viewer)
     {
-        var edit = FindWindowEx(viewer, 0, "Edit", null);
+        return EditText(FindWindowEx(viewer, 0, "Edit", null));
+    }
+
+    // An edit control's text lives in the control, not in its window caption, so it is read with WM_GETTEXT.
+    private static string ControlText(nint dialog, int id)
+    {
+        var control = GetDlgItem(dialog, id);
+        return control == 0 ? "" : EditText(control);
+    }
+
+    private static string EditText(nint edit)
+    {
         var length = (int) SendMessage(edit, WmGetTextLength, 0, 0);
         var buffer = new char[length + 1];
         var copied = (int) SendMessage(edit, WmGetText, buffer.Length, buffer);

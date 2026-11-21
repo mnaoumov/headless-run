@@ -46,7 +46,9 @@ The text goes to the first place that can take it:
 1. the file named by `--stdout FILE`;
 2. a redirected standard output, such as `headless-run --echo -- tool.exe "a b" | more`;
 3. the console of the shell that started the launcher;
-4. a message box, when there is no console at all: a shortcut, the Run dialog or Explorer. Press Ctrl+C in it to copy its text.
+4. a window, when there is no console at all: a shortcut, the Run dialog or Explorer.
+
+The window shows the same text, and below it the received command line in a box you can edit. The arguments under that box are split again on every keystroke, by the same C runtime rule, so you can try a variant of the line, an added quote or a doubled backslash, where it actually runs. Ctrl+C copies the selection, or the whole box when nothing is selected; Tab moves between the boxes, and Esc or Close ends the launcher.
 
 Under Task Scheduler with no desktop there is nowhere to show it, so pass `--stdout FILE` there. The exit code is 0, or 125 when the child command line cannot be built, for example when the engine's interpreter is not installed; the reason is then part of the text. `--echo` with no `--` shows the launcher's own arguments only.
 
