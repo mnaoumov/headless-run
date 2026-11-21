@@ -18,7 +18,7 @@ internal sealed unsafe class EchoDialog
     internal const int HintControlId = 105;
     internal const int DialogCancel = 2;
     private const string Prompt = "Command line to try (its arguments, as the C runtime splits them, follow as you type):";
-    private const string Hint = "Ctrl+C copies the selection, or the whole box when nothing is selected. Tab moves between boxes; Esc closes.";
+    private const string Hint = "Ctrl+C copies the selection, or the whole box when none is selected. Esc closes.";
     private const int WindowWidth = 760;
     private const int WindowHeight = 600;
     private const int Margin = 10;
