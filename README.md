@@ -1,5 +1,7 @@
 # headless-run
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/mnaoumov) [![GitHub release](https://img.shields.io/github/v/release/mnaoumov/headless-run)](https://github.com/mnaoumov/headless-run/releases) [![GitHub downloads](https://img.shields.io/github/downloads/mnaoumov/headless-run/total)](https://github.com/mnaoumov/headless-run/releases) [![CI](https://img.shields.io/github/actions/workflow/status/mnaoumov/headless-run/ci.yml?branch=main&label=CI)](https://github.com/mnaoumov/headless-run/actions/workflows/ci.yml) [![License](https://img.shields.io/github/license/mnaoumov/headless-run)](https://github.com/mnaoumov/headless-run/blob/main/LICENSE)
+
 Run a Windows console program without a console window, keep its exact command line, and return its exit code. Designed for Task Scheduler and background automation.
 
 The launcher is a Windows-subsystem executable. It starts console programs with `CREATE_NO_WINDOW`, using documented Win32 APIs, contains the child's process tree in a kill-on-close job, and returns the child's exit code. It requires Windows 10 / Windows Server 2016 or later. Release executables are native, self-contained, and need no .NET runtime installed.
