@@ -553,8 +553,10 @@ internal static class Program
                 {
                     nint dialog = 0;
                     WaitFor(() => (dialog = FindWindowEx(0, 0, DialogWindowClass, EchoCaption)) != 0, "no echo message box");
+                    // The dialog is findable while it is still being created: wait for its text control to be filled.
                     var buffer = new char[EchoTextCharacters];
-                    var length = GetWindowText(GetDlgItem(dialog, MessageBoxTextControl), buffer, buffer.Length);
+                    var length = 0;
+                    WaitFor(() => (length = GetWindowText(GetDlgItem(dialog, MessageBoxTextControl), buffer, buffer.Length)) != 0, "echo message box has no text");
                     var text = new string(buffer, 0, length);
                     SendMessage(dialog, WmCommand, DialogCancel, 0);
                     Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds) && process.ExitCode == 0, "outer launcher did not end cleanly");
