@@ -35,7 +35,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Integration tests failed'
     }
-    # The README's per-shell examples, run as written; WSL and Task Scheduler need -Wsl and -TaskScheduler there.
+    # The per-shell examples of the Calling it from a shell docs page, run as written; WSL and Task Scheduler need -Wsl and -TaskScheduler there.
     & (Join-Path $PSScriptRoot 'test-shell-examples.ps1') -Launcher $Launcher -Harness ./tests/Integration/bin/Release/net10.0/Integration.exe
 }
 finally {

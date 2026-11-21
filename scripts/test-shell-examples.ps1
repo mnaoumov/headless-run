@@ -22,9 +22,9 @@ trap {
     throw $_
 }
 
-# Runs every README block under "Calling it from a shell" that is marked <!-- example: KIND -->,
+# Runs every block of the "Calling it from a shell" docs page that is marked <!-- example: KIND -->,
 # exactly as written except that C:\Tools and C:\Scripts point at a temporary folder,
-# and checks what tool.exe and job.ps1 received against the README's own <!-- example-argv --> list.
+# and checks what tool.exe and job.ps1 received against the page's own <!-- example-argv --> list.
 
 $taskName = 'headless-run example'
 $recordTimeoutSeconds = 60
@@ -32,12 +32,13 @@ $taskTimeoutSeconds = 60
 $pollMilliseconds = 250
 
 $repo = Split-Path -Path $PSScriptRoot -Parent
-$readme = Get-Content -LiteralPath (Join-Path -Path $repo -ChildPath 'README.md') -Raw
+$pageRelativePath = 'docs/src/content/docs/guides/calling-from-a-shell.md'
+$page = Get-Content -LiteralPath (Join-Path -Path $repo -ChildPath $pageRelativePath) -Raw
 
 function Get-ExpectedArguments {
-    $match = [regex]::Match($readme, '<!-- example-argv -->\r?\n((?:\d+\. `.*`\r?\n)+)')
+    $match = [regex]::Match($page, '<!-- example-argv -->\r?\n((?:\d+\. `.*`\r?\n)+)')
     if (-not $match.Success) {
-        throw 'README.md has no <!-- example-argv --> list'
+        throw "$pageRelativePath has no <!-- example-argv --> list"
     }
     return @($match.Groups[1].Value -split '\r?\n' | Where-Object -FilterScript { $_ } | ForEach-Object -Process {
             [regex]::Match($_, '^\d+\. `(.*)`$').Groups[1].Value
@@ -45,9 +46,9 @@ function Get-ExpectedArguments {
 }
 
 function Get-Examples {
-    $found = [regex]::Matches($readme, '<!-- example: (?<kind>[a-z-]+) -->\r?\n```[a-z]+\r?\n(?<code>[\s\S]*?)```')
+    $found = [regex]::Matches($page, '<!-- example: (?<kind>[a-z-]+) -->\r?\n```[a-z]+\r?\n(?<code>[\s\S]*?)```')
     if ($found.Count -eq 0) {
-        throw 'README.md has no <!-- example: KIND --> blocks'
+        throw "$pageRelativePath has no <!-- example: KIND --> blocks"
     }
     return @($found | ForEach-Object -Process {
             [pscustomobject]@{
@@ -240,7 +241,7 @@ $record = [pscustomobject]@{ name = $Name; dryRun = [bool] $DryRun; rest = @($ar
                 $null = Invoke-Raw -FileName 'dotnet' -Arguments ('run "' + $file + '.cs"')
             }
             default {
-                throw "README.md has an example of unknown kind '$($example.Kind)'"
+                throw "$pageRelativePath has an example of unknown kind '$($example.Kind)'"
             }
         }
 
@@ -288,5 +289,5 @@ finally {
 
 if ($failures.Count -ne 0) {
     $failures | ForEach-Object -Process { Write-Output -InputObject "FAIL $_" }
-    throw "$($failures.Count) README shell example(s) failed"
+    throw "$($failures.Count) shell example(s) in $pageRelativePath failed"
 }

@@ -1,0 +1,22 @@
+{
+  "name": "headless-run",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The documentation site of headless-run. The launcher itself is built with .NET; see AGENTS.md.",
+  "type": "module",
+  "scripts": {
+    "docs:build": "jiti scripts/docs-build.ts",
+    "docs:dev": "jiti scripts/docs-dev.ts",
+    "docs:preview": "jiti scripts/docs-preview.ts"
+  },
+  "devDependencies": {
+    "@astrojs/markdown-satteri": "^0.4.4",
+    "@astrojs/starlight": "^0.42.6",
+    "@mnaoumov/typescript-dev-toolkit": "^8.2.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "astro": "^7.4.0",
+    "jiti": "^2.7.0",
+    "satori": "^0.33.5",
+    "satteri": "^0.10.5"
+  }
+}

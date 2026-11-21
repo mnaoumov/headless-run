@@ -2,3 +2,10 @@
 **/obj/
 artifacts/
 .vs/
+
+# Documentation site (Astro + Starlight)
+node_modules/
+.astro/
+docs/dist/
+docs/src/generated-sidebar.json
+docs/public/og/
