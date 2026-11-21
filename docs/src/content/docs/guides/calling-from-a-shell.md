@@ -23,7 +23,7 @@ The first `--` ends the launcher's options. The fifth argument, a second `--`, i
 
 `scripts/test-shell-examples.ps1` runs each example block on this page exactly as written, with `C:\Tools` and `C:\Scripts` pointed at a temporary folder, and checks what `tool.exe` and `job.ps1` received against the lists above. `scripts/test.ps1`, which CI runs, includes it for `cmd`, PowerShell 7, Windows PowerShell 5.1, Git Bash, a shortcut, Node, Python and C#, skipping a caller the machine lacks with a note. `-Wsl` and `-TaskScheduler` add the WSL and Task Scheduler examples, which were checked on Windows 11 with WSL 2 Ubuntu.
 
-To check a call of your own, put `--echo` after `headless-run` and run it the same way: the launcher starts nothing and shows the arguments it received and the exact child command line, in a message box when the caller has no console. See [Checking what a caller passes](/headless-run/guides/options/#checking-what-a-caller-passes).
+To check a call of your own, put `--echo` after `headless-run` and run it the same way: the launcher starts nothing and shows the arguments it received and the exact child command line, in a message box when the caller has no console. See [Checking what a caller passes](/headless-run/guides/options/#checking-what-a-caller-passes). For an argument list of your own, the [quoting playground](/headless-run/guides/quoting-playground/) writes the line for each caller below, and reads a line back into arguments.
 
 ## `cmd.exe` prompt
 

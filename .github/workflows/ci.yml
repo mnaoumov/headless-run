@@ -17,6 +17,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Quoting playground model tests
+        run: node --test docs/src/quoting-models/quoting.test.ts
       # Builds the documentation site and checks every link in it; the deployment is build-pages.yml.
       - name: Build documentation site
         env:
@@ -31,6 +33,10 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
+      # The quoting playground's models are TypeScript, which test.ps1 runs with this Node.
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
       - name: Build and integration test
         shell: pwsh
         run: ./scripts/test.ps1
