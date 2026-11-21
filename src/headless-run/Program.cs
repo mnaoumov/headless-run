@@ -487,7 +487,7 @@ internal static class Program
                               a service, session 0 or --detach
         --event-log           Write the run's outcome to the Application event log
         --echo                Start nothing: show the arguments received and the child
-                              command line (stdout, the console, or a message box)
+                              command line (stdout, the console, or a window)
         --help                Print this help
         --version             Print version
         Value options also accept --name=VALUE. Output parent directories are created.

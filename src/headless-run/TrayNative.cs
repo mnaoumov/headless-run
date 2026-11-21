@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace HeadlessRun;
 
-// The user32, shell32 and gdi32 surface behind --tray. Plain Win32, so the NativeAOT build needs no UI framework.
+// The user32, shell32 and gdi32 surface behind --tray and the --echo window. Plain Win32, so the NativeAOT build needs no UI framework.
 internal static class TrayNative
 {
     private const string User32Library = "user32.dll";
@@ -66,6 +66,19 @@ internal static class TrayNative
     internal const uint HandleFlagInherit = 1;
     internal const int LowWordMask = 0xFFFF;
     internal const int HighWordShift = 16;
+    internal const uint WmActivate = 0x0006;
+    internal const uint WmGetTextLength = 0x000E;
+    internal const uint WmKeyDown = 0x0100;
+    internal const uint WmCopy = 0x0301;
+    internal const uint EmGetSelection = 0x00B0;
+    internal const uint EnChange = 0x0300;
+    internal const uint WsTabStop = 0x00010000;
+    internal const uint WsExClientEdge = 0x00000200;
+    internal const int WaInactive = 0;
+    internal const nint VirtualKeyC = 0x43;
+    internal const int VirtualKeyControl = 0x11;
+    internal const nint IdcArrow = 32512;
+    internal const nint ColorButtonFace = 15;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Point
@@ -183,6 +196,19 @@ internal static class TrayNative
     internal static extern bool GetCursorPos(out Point point);
     [DllImport(User32Library, EntryPoint = "LoadIconW")]
     internal static extern nint LoadIcon(nint instance, nint name);
+    [DllImport(User32Library, EntryPoint = "LoadCursorW")]
+    internal static extern nint LoadCursor(nint instance, nint name);
+    [DllImport(User32Library)]
+    internal static extern nint SetFocus(nint window);
+    [DllImport(User32Library)]
+    internal static extern nint GetFocus();
+    [DllImport(User32Library)]
+    internal static extern short GetKeyState(int key);
+    [DllImport(User32Library, EntryPoint = "IsDialogMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsDialogMessage(nint dialog, ref Message message);
+    [DllImport(User32Library, EntryPoint = "GetWindowTextW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetWindowText(nint window, char[] text, int capacity);
     [DllImport(User32Library, EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode)]
     internal static extern uint RegisterWindowMessage(string name);
     [DllImport(User32Library)]

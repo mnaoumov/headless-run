@@ -5,18 +5,15 @@ namespace HeadlessRun;
 
 // --echo: show what the launcher received and the child command line it would start, then start nothing.
 // It reaches the person who asked wherever they are: --stdout FILE, a redirected stdout, the calling
-// console, or a message box when there is no console at all (a shortcut, the Run dialog, Explorer).
+// console, or, when there is no console at all (a shortcut, the Run dialog, Explorer), a window that also
+// lets the person edit the command line and see it split again as they type (EchoDialog).
 internal static class Echo
 {
     internal const string Caption = "headless-run --echo";
     private const string Kernel32Library = "kernel32.dll";
-    private const string User32Library = "user32.dll";
     private const uint FileTypeDisk = 1;
     private const uint FileTypeChar = 2;
     private const uint FileTypePipe = 3;
-    private const uint MessageBoxOk = 0x0;
-    private const uint MessageBoxIconInformation = 0x40;
-    private const uint MessageBoxSetForeground = 0x10000;
 
     internal static int Run(Options options, string commandLine)
     {
@@ -76,18 +73,13 @@ internal static class Echo
             }
         }
 
-        Show(options, text.ToString());
+        Show(options, text.ToString(), commandLine);
         return code;
     }
 
-    // One numbered line per argument, in brackets so leading and trailing spaces and empty arguments show.
     private static void AppendArguments(StringBuilder text, string commandLine)
     {
-        var arguments = Split(commandLine);
-        for (var index = 0; index < arguments.Count; index++)
-        {
-            text.Append("  ").Append(index).Append(": [").Append(arguments[index]).Append("]\n");
-        }
+        text.Append(EchoDialog.FormatArguments(commandLine, "\n"));
     }
 
     // The Microsoft C runtime's split: the program name up to its closing quote or whitespace, with no
@@ -132,7 +124,7 @@ internal static class Echo
         }
     }
 
-    private static void Show(Options options, string text)
+    private static void Show(Options options, string text, string commandLine)
     {
         if (options.Output is not null)
         {
@@ -164,7 +156,7 @@ internal static class Echo
             throw new InvalidOperationException("--echo has no console and no desktop to show its text on: pass --stdout FILE.");
         }
 
-        MessageBox(0, text + "\nCtrl+C copies this text.", Caption, MessageBoxOk | MessageBoxIconInformation | MessageBoxSetForeground);
+        EchoDialog.Show(text, commandLine);
     }
 
     // A file, a pipe or a console takes the text. NUL, a missing handle or anything else does not.
@@ -222,6 +214,4 @@ internal static class Echo
     [DllImport(Kernel32Library, EntryPoint = "WriteConsoleW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool WriteConsole(nint console, string text, uint length, out uint written, nint reserved);
-    [DllImport(User32Library, EntryPoint = "MessageBoxW", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int MessageBox(nint owner, string text, string caption, uint type);
 }

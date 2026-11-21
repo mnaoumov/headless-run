@@ -18,7 +18,7 @@ It runs in your browser and sends nothing anywhere. Everything here applies to a
 
 ## How far to trust it
 
-The last step, a program splitting its command line, is exact: it is the Microsoft C runtime's rule, the one `headless-run --echo` shows (see [Checking what a caller passes](/headless-run/guides/options/#checking-what-a-caller-passes)), and most Windows programs use it. A program that reads its command line its own way, such as `cmd.exe` itself, can disagree.
+The last step, a program splitting its command line, is exact: it is the Microsoft C runtime's rule, the one `headless-run --echo` shows (see [Checking what a caller passes](/headless-run/guides/options/#checking-what-a-caller-passes)), and most Windows programs use it. To try that split on the real thing, start `--echo` from a shortcut or the Run dialog: its window lets you edit the received line and splits it again as you type. A program that reads its command line its own way, such as `cmd.exe` itself, can disagree.
 
 The shell layers are models. Each one is checked against the real caller: `scripts/test-quoting-models.ps1` takes a corpus of about 30 argument lists (quotes, trailing backslashes, `%`, `&`, `^`, `!`, `|`, `<`, `>`, parentheses, PowerShell and bash metacharacters, spaces, empty arguments and text outside ASCII) and a set of lines typed by hand, runs the line each model writes through the real caller to a program that records what it receives, and fails when the two differ. `scripts/test.ps1` runs it, and its `-Wsl` switch adds WSL. The line under each caller says how that caller was checked. The Run dialog cannot be driven by a script; it reads the line as a shortcut does, which was checked by hand.
 

@@ -40,6 +40,10 @@ Run `dotnet publish src/headless-run -c Release -r win-x64 -p:PublishAot=true -o
 
 `--tray=auto` is the default, decided in `TrayAuto.cs` by the launcher that would host the icon (never the elevated copy): off with `--detach`, in session 0, without a visible window station, or when the `Schedule` service's process is an ancestor (parent chain from a Toolhelp snapshot, each link older than its child so a reused pid ends the walk). An auto tray is `Quiet`: no missing-icon diagnostic, a failed start runs the job without it, and no linger. The integration harness sets `HEADLESS_RUN_TEST_SCHEDULER_PID` to its own pid for every launcher, so the suite never shows an auto icon; a test that wants the desktop branch sets it to `0`. `HEADLESS_RUN_TEST_TRAY_REPORT=1` prints the decision on stderr.
 
+## Echo window
+
+`--echo` with no console to write to shows `EchoDialog.cs`: a plain Win32 window (class `HeadlessRunEcho`, caption `headless-run --echo`) through `TrayNative.cs`, with the report, an editable copy of the received launcher line, and that line's arguments, split again by `Echo.Split` on every `EN_CHANGE`. The integration test finds it by class and caption and drives it by control id (report 101, line 102, arguments 103) and `IDCANCEL`; keep those ids and the test constants in step.
+
 ## Event log
 
 `--event-log` is in `JobEventLog.cs`: one Application-log event per run, written as `Main` returns, through P/Invoke `RegisterEventSourceW`/`ReportEventW` (no `System.Diagnostics.EventLog` package, so NativeAOT needs nothing extra). A code path that knows its outcome better than the exit code does (timeout, tray stop, detach, caller gone) calls `JobEventLog.Record`; otherwise the code decides. Under `--elevate` the copy writes the event and the caller sets `JobEventLog.Relayed`, so a relayed run is never logged twice. The source is never registered by the launcher, and a failed write is swallowed. The event ids are documented on the docs site's `event-log.md` page; keep them, the `Outcome` enum and the integration test constants in step.
