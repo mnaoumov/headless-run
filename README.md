@@ -6,7 +6,7 @@ The launcher is a Windows-subsystem executable. It starts console programs with 
 
 ## Documentation
 
-The full documentation is at [mnaoumov.dev/headless-run](https://mnaoumov.dev/headless-run/): [calling it from each shell](https://mnaoumov.dev/headless-run/guides/calling-from-a-shell/), [programs and scripts](https://mnaoumov.dev/headless-run/guides/programs-and-scripts/), [configuration](https://mnaoumov.dev/headless-run/guides/configuration/), [options](https://mnaoumov.dev/headless-run/guides/options/), [exit codes](https://mnaoumov.dev/headless-run/guides/exit-codes-and-lifetime/), [elevation](https://mnaoumov.dev/headless-run/guides/elevation/), the [tray icon](https://mnaoumov.dev/headless-run/guides/tray-icon/), the [event log](https://mnaoumov.dev/headless-run/guides/event-log/) and [building and testing](https://mnaoumov.dev/headless-run/guides/building-and-testing/).
+The full documentation is at [mnaoumov.dev/headless-run](https://mnaoumov.dev/headless-run/): [calling it from each shell](https://mnaoumov.dev/headless-run/guides/calling-from-a-shell/), a [quoting playground](https://mnaoumov.dev/headless-run/guides/quoting-playground/), [programs and scripts](https://mnaoumov.dev/headless-run/guides/programs-and-scripts/), [configuration](https://mnaoumov.dev/headless-run/guides/configuration/), [options](https://mnaoumov.dev/headless-run/guides/options/), [exit codes](https://mnaoumov.dev/headless-run/guides/exit-codes-and-lifetime/), [elevation](https://mnaoumov.dev/headless-run/guides/elevation/), the [tray icon](https://mnaoumov.dev/headless-run/guides/tray-icon/), the [event log](https://mnaoumov.dev/headless-run/guides/event-log/) and [building and testing](https://mnaoumov.dev/headless-run/guides/building-and-testing/).
 
 ## Usage
 
@@ -20,7 +20,7 @@ For a scheduled task, set **Program/script** to the full path of `headless-run.e
 --stderr "C:\Logs\nightly-stderr.txt" --stdout "C:\Logs\nightly-stdout.txt" --append --timeout 30m -- "C:\Scripts\nightly.ps1"
 ```
 
-Everything after `--` reaches the child unchanged: the launcher never splits or re-quotes it. A calling shell still processes its own syntax first, so [Calling it from a shell](https://mnaoumov.dev/headless-run/guides/calling-from-a-shell/) shows the same call typed from each one.
+Everything after `--` reaches the child unchanged: the launcher never splits or re-quotes it. A calling shell still processes its own syntax first, so [Calling it from a shell](https://mnaoumov.dev/headless-run/guides/calling-from-a-shell/) shows the same call typed from each one, and the [quoting playground](https://mnaoumov.dev/headless-run/guides/quoting-playground/) escapes any argument list for each.
 
 ## Install
 

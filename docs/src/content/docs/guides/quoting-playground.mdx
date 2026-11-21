@@ -1,0 +1,32 @@
+---
+title: Quoting playground
+description: Type the arguments a program should receive and get the line to write in each shell, or type a line and see the arguments it becomes.
+sidebar:
+    order: 2.5
+---
+
+import QuotingPlayground from '../../../components/QuotingPlayground.astro';
+
+Each caller turns what you write into a Windows command line in its own way, and the program then splits that line into arguments. This page models both steps for the callers on [Calling it from a shell](/headless-run/guides/calling-from-a-shell/), in both directions:
+
+1. **Arguments to the line to write**: type the arguments the program should receive, and get the line to write after the program name in every caller, escaped for it, with what cannot be escaped there.
+2. **A line to the arguments received**: pick a caller, type the line, and see the arguments the program receives.
+
+It runs in your browser and sends nothing anywhere. Everything here applies to any Windows program, not only to `headless-run`: write the line after `headless-run --` to pass it on unchanged.
+
+<QuotingPlayground />
+
+## How far to trust it
+
+The last step, a program splitting its command line, is exact: it is the Microsoft C runtime's rule, the one `headless-run --echo` shows (see [Checking what a caller passes](/headless-run/guides/options/#checking-what-a-caller-passes)), and most Windows programs use it. A program that reads its command line its own way, such as `cmd.exe` itself, can disagree.
+
+The shell layers are models. Each one is checked against the real caller: `scripts/test-quoting-models.ps1` takes a corpus of about 30 argument lists (quotes, trailing backslashes, `%`, `&`, `^`, `!`, `|`, `<`, `>`, parentheses, PowerShell and bash metacharacters, spaces, empty arguments and text outside ASCII) and a set of lines typed by hand, runs the line each model writes through the real caller to a program that records what it receives, and fails when the two differ. `scripts/test.ps1` runs it, and its `-Wsl` switch adds WSL. The line under each caller says how that caller was checked. The Run dialog cannot be driven by a script; it reads the line as a shortcut does, which was checked by hand.
+
+The forward models read what a person usually types, not the whole language: a PowerShell variable, a bash `$HOME` or an operator in the middle of the line is reported rather than guessed. Put the value in single quotes, or check the real call with `--echo`.
+
+## What the models found
+
+1. **cmd**: a `%` cannot be escaped inside cmd's own quotes at the prompt. When one would sit there next to another `%`, the playground writes every `"` as `^"`, so cmd never enters quotes, and escapes the rest with `^`. A `%NAME%` outside quotes is broken up as `%^NAME%`. In a batch file, `%%` is enough everywhere.
+2. **PowerShell**: a value of `--%` is read as the stop-parsing token however it is written: `'--%'`, `"--%"` and `('--%')` all stop parsing. So the playground puts the whole list after a `--%` of its own. After `--%`, PowerShell 7 splits the rest at whitespace and passes each piece with its quotes as literal characters, so there an argument with a space cannot come along. Windows PowerShell 5.1 passes the rest as a raw command line.
+3. **Windows PowerShell 5.1** cannot pass a value such as `"a b"`, quotes included, with its own quoting, since it wraps an argument in quotes only when it has whitespace outside its own quotes and never escapes anything. The playground then uses `--%`.
+4. **Shortcuts**: `WScript.Shell`'s `CreateShortcut` stored `日本語` and `😀` as `?` on Windows 11 with the ANSI code page 1252, though Cyrillic survived. Check such a shortcut with `--echo`.

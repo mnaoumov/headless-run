@@ -4,6 +4,7 @@ param([string] $Launcher)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $env:DOTNET_PROCESSOR_COUNT = '2'
+$launcherGiven = [bool] $Launcher
 $repo = Split-Path $PSScriptRoot -Parent
 Push-Location $repo
 try {
@@ -37,6 +38,15 @@ try {
     }
     # The per-shell examples of the Calling it from a shell docs page, run as written; WSL and Task Scheduler need -Wsl and -TaskScheduler there.
     & (Join-Path $PSScriptRoot 'test-shell-examples.ps1') -Launcher $Launcher -Harness ./tests/Integration/bin/Release/net10.0/Integration.exe
+    # The quoting playground's models: their unit tests, then every line they generate run through the real caller.
+    # They do not involve the launcher, so a run against a published executable leaves them to the default run.
+    if (-not $launcherGiven) {
+        node --test docs/src/quoting-models/quoting.test.ts
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Quoting model unit tests failed'
+        }
+        & (Join-Path $PSScriptRoot 'test-quoting-models.ps1') -Harness ./tests/Integration/bin/Release/net10.0/Integration.exe
+    }
 }
 finally {
     Pop-Location

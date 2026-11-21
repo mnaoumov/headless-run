@@ -1,0 +1,347 @@
+---
+/**
+ * @file
+ *
+ * The quoting playground: type a line and see the arguments a program receives from it in a caller, or type the
+ * arguments and get the line to write in every caller. The models live in `src/quoting-models/quoting.ts`.
+ */
+---
+
+<div class="playground" data-quoting-playground>
+  <fieldset class="direction">
+    <legend>Direction</legend>
+    <label><input type="radio" name="direction" value="reverse" checked /> Arguments to the line to write</label>
+    <label><input type="radio" name="direction" value="forward" /> A line to the arguments received</label>
+  </fieldset>
+
+  <section data-panel="reverse">
+    <p>Type each argument the program should receive, one per row. Leading and trailing spaces count, and an empty row is an empty argument.</p>
+    <ol class="rows" data-rows></ol>
+    <p class="buttons">
+      <button type="button" data-add>Add an argument</button>
+      <button type="button" data-paste>Replace with lines from the clipboard</button>
+    </p>
+    <div data-reverse-output></div>
+  </section>
+
+  <section data-panel="forward" hidden>
+    <p>
+      <label>Caller
+        <select data-caller></select>
+      </label>
+    </p>
+    <p>
+      <label>What you write after the program name
+        <input type="text" data-line spellcheck="false" autocomplete="off" value='"hello world" a^&amp;b 100%' />
+      </label>
+    </p>
+    <details>
+      <summary>Variables to treat as set</summary>
+      <p>
+        <label>One <code>NAME=value</code> per line; any other variable is unset.
+          <textarea data-environment rows="3" spellcheck="false"></textarea>
+        </label>
+      </p>
+    </details>
+    <div data-forward-output></div>
+  </section>
+</div>
+
+<script>
+  import { CALLERS, type Caller, type Environment } from '../quoting-models/quoting.ts';
+
+  const INITIAL_ARGUMENTS = ['hello world', 'say "hi"', '100%', 'a&b', 'C:\\Log files\\'];
+  const COPIED_LABEL_MILLISECONDS = 1500;
+
+  function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
+    const created = document.createElement(tag);
+    created.textContent = text;
+    if (className) {
+      created.className = className;
+    }
+    return created;
+  }
+
+  function query<T extends Element>(root: ParentNode, selector: string): T {
+    const found = root.querySelector<T>(selector);
+    if (!found) {
+      throw new Error(`The playground has no ${selector}`);
+    }
+    return found;
+  }
+
+  function notesList(notes: readonly string[]): HTMLElement | null {
+    if (notes.length === 0) {
+      return null;
+    }
+    const list = element('ul', '', 'notes');
+    for (const note of notes) {
+      list.append(element('li', note));
+    }
+    return list;
+  }
+
+  function argumentsList(args: readonly string[]): HTMLElement {
+    if (args.length === 0) {
+      return element('p', 'The program receives no arguments.');
+    }
+    const list = element('ol', '', 'received');
+    list.start = 1;
+    for (const arg of args) {
+      const item = element('li');
+      item.append(element('code', `[${arg}]`));
+      list.append(item);
+    }
+    return list;
+  }
+
+  function copyButton(text: string): HTMLButtonElement {
+    const button = element('button', 'Copy');
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      void navigator.clipboard.writeText(text).then(() => {
+        button.textContent = 'Copied';
+        setTimeout(() => {
+          button.textContent = 'Copy';
+        }, COPIED_LABEL_MILLISECONDS);
+      });
+    });
+    return button;
+  }
+
+  function setUp(root: HTMLElement): void {
+    const rows = query<HTMLOListElement>(root, '[data-rows]');
+    const reverseOutput = query<HTMLElement>(root, '[data-reverse-output]');
+    const forwardOutput = query<HTMLElement>(root, '[data-forward-output]');
+    const callerSelect = query<HTMLSelectElement>(root, '[data-caller]');
+    const lineInput = query<HTMLInputElement>(root, '[data-line]');
+    const environmentInput = query<HTMLTextAreaElement>(root, '[data-environment]');
+    const lineCallers = CALLERS.filter((caller) => caller.example !== '');
+
+    for (const caller of lineCallers) {
+      const option = element('option', caller.name);
+      option.value = caller.id;
+      callerSelect.append(option);
+    }
+
+    function currentArguments(): string[] {
+      return [...rows.querySelectorAll<HTMLInputElement>('input')].map((input) => input.value);
+    }
+
+    function addRow(value: string): void {
+      const item = element('li');
+      const input = element('input');
+      input.type = 'text';
+      input.value = value;
+      input.spellcheck = false;
+      input.autocomplete = 'off';
+      input.setAttribute('aria-label', 'Argument');
+      input.addEventListener('input', renderReverse);
+      const remove = element('button', 'Remove');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        item.remove();
+        renderReverse();
+      });
+      const row = element('div', '', 'row');
+      row.append(input, remove);
+      item.append(row);
+      rows.append(item);
+    }
+
+    function renderCaller(caller: Caller, args: readonly string[]): HTMLElement {
+      const card = element('article', '', 'caller');
+      card.append(element('h3', caller.name));
+      const result = caller.reverse(args);
+      if (result.line === undefined) {
+        card.append(element('p', result.error ?? 'No line can carry these arguments here.', 'error'));
+      } else {
+        const text = caller.example ? `${caller.example} ${result.line}` : result.line;
+        const line = element('p', '', 'line');
+        line.append(element('code', text), copyButton(text));
+        card.append(line);
+      }
+      const notes = notesList(result.notes);
+      if (notes) {
+        card.append(notes);
+      }
+      card.append(element('p', caller.verified, 'verified'));
+      return card;
+    }
+
+    function renderReverse(): void {
+      const args = currentArguments();
+      reverseOutput.replaceChildren(...CALLERS.map((caller) => renderCaller(caller, args)));
+    }
+
+    function readEnvironment(): Environment {
+      const environment = new Map<string, string>();
+      for (const line of environmentInput.value.split(/\r?\n/u)) {
+        const separator = line.indexOf('=');
+        if (separator > 0) {
+          environment.set(line.slice(0, separator), line.slice(separator + 1));
+        }
+      }
+      return environment;
+    }
+
+    function renderForward(): void {
+      const caller = lineCallers.find((candidate) => candidate.id === callerSelect.value) ?? lineCallers[0];
+      const result = caller.forward(lineInput.value, readEnvironment());
+      const parts: HTMLElement[] = [element('h3', `${caller.name}: what ${caller.example} receives`)];
+      if (result.args) {
+        parts.push(argumentsList(result.args));
+      } else {
+        parts.push(element('p', result.error ?? 'The model cannot tell.', 'error'));
+      }
+      const notes = notesList(result.notes);
+      if (notes) {
+        parts.push(notes);
+      }
+      parts.push(element('p', caller.verified, 'verified'));
+      forwardOutput.replaceChildren(...parts);
+    }
+
+    for (const radio of root.querySelectorAll<HTMLInputElement>('input[name="direction"]')) {
+      radio.addEventListener('change', () => {
+        for (const panel of root.querySelectorAll<HTMLElement>('[data-panel]')) {
+          panel.hidden = panel.dataset.panel !== radio.value;
+        }
+      });
+    }
+    query<HTMLButtonElement>(root, '[data-add]').addEventListener('click', () => {
+      addRow('');
+      renderReverse();
+      rows.querySelector<HTMLInputElement>('li:last-child input')?.focus();
+    });
+    query<HTMLButtonElement>(root, '[data-paste]').addEventListener('click', () => {
+      void navigator.clipboard.readText().then((text) => {
+        rows.replaceChildren();
+        for (const value of text.replace(/\r?\n$/u, '').split(/\r?\n/u)) {
+          addRow(value);
+        }
+        renderReverse();
+      });
+    });
+    callerSelect.addEventListener('change', renderForward);
+    lineInput.addEventListener('input', renderForward);
+    environmentInput.addEventListener('input', renderForward);
+
+    for (const value of INITIAL_ARGUMENTS) {
+      addRow(value);
+    }
+    renderReverse();
+    renderForward();
+  }
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-quoting-playground]')) {
+    setUp(root);
+  }
+</script>
+
+<style>
+  .playground :global(input[type='text']),
+  .playground textarea,
+  .playground select {
+    width: 100%;
+    font-family: var(--sl-font-mono);
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--sl-color-gray-4);
+    border-radius: 0.25rem;
+    background: var(--sl-color-gray-6);
+    color: var(--sl-color-white);
+  }
+
+  .playground select {
+    font-family: inherit;
+  }
+
+  .direction {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    border: none;
+    padding: 0;
+  }
+
+  .direction legend {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  .playground :global(.row) {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .playground :global(.row > *) {
+    margin: 0;
+  }
+
+  .playground :global(.row input) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .playground :global(.buttons > *),
+  .playground :global(.line > *) {
+    margin: 0;
+  }
+
+  .playground :global(button) {
+    flex: none;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--sl-color-gray-4);
+    border-radius: 0.25rem;
+    background: var(--sl-color-gray-6);
+    color: var(--sl-color-white);
+    cursor: pointer;
+  }
+
+  .playground :global(button:hover) {
+    border-color: var(--sl-color-accent);
+  }
+
+  .playground :global(.caller h3) {
+    font-size: var(--sl-text-lg);
+  }
+
+  .playground :global(.caller) {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .playground :global(.line) {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  .playground :global(.line code) {
+    flex: 1;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .playground :global(.received code) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .playground :global(.error) {
+    color: var(--sl-color-red-high);
+  }
+
+  .playground :global(.verified) {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+</style>
