@@ -50,6 +50,12 @@ internal static class Program
     private const string ArgumentRecorderName = "tool";
     private const string ArgumentRecordFile = "received.jsonl";
     private const string ArgumentRecordVariable = "GREETING";
+    private const string DialogWindowClass = "#32770";
+    private const string EchoCaption = "headless-run --echo";
+    private const int EchoTextCharacters = 8192;
+    private const int MessageBoxTextControl = 0xFFFF;
+    // A message box with only OK ends on IDCANCEL, as on Esc; a sent IDOK leaves it open.
+    private const nint DialogCancel = 2;
     [DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
     private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
     [DllImport("user32.dll")]
@@ -63,6 +69,8 @@ internal static class Program
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindowVisible(nint window);
+    [DllImport("user32.dll")]
+    private static extern nint GetDlgItem(nint dialog, int id);
     [DllImport("kernel32.dll")]
     private static extern nint GetConsoleWindow();
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -514,6 +522,51 @@ internal static class Program
             {
                 Assert(Run(launcher, "--help").Output.Contains("Usage:"), "help");
                 Assert(Run(launcher, "--version   ").Output == "headless-run 1.0.0\n", "version");
+            });
+            Test("echo shows the arguments and the child command line, and starts nothing", () =>
+            {
+                var tail = Quote(Self) + " child exit 9 \"a b\" \"\" \"say \\\"hi\\\"\"";
+                var run = Run(launcher, "--echo --env HEADLESS_ECHO=1 -- " + tail);
+                Assert(run.Code == 0, "echo started the child: " + run.Code + " " + run.Error);
+                Assert(run.Output.Contains("  1: [--echo]\n"), "launcher argument: " + run.Output);
+                Assert(run.Output.Contains("Child tail, forwarded unchanged:\n  " + tail + "\n"), "tail: " + run.Output);
+                Assert(run.Output.Contains("Engine: none, the program runs directly\n"), "engine: " + run.Output);
+                Assert(run.Output.Contains("Child command line:\n  " + tail + "\n"), "child line: " + run.Output);
+                Assert(run.Output.Contains("  0: [" + Self + "]\n  1: [child]\n  2: [exit]\n  3: [9]\n  4: [a b]\n  5: []\n  6: [say \"hi\"]\n"), "child argv: " + run.Output);
+                Assert(run.Output.Contains("  HEADLESS_ECHO=1\n"), "environment: " + run.Output);
+                var output = Path.Combine(root, "echo.txt");
+                Assert(Run(launcher, "--echo --stdout " + Quote(output) + " -- tool.exe x").Code == 0, "echo to a file");
+                Assert(File.ReadAllText(output).Contains("Child command line:\n  tool.exe x\n"), "echo file");
+                var script = Run(launcher, "--echo -- " + Quote(Path.Combine(root, "echo script.cmd")) + " \"a b\"");
+                Assert(script.Code == 0 && script.Output.Contains("Engine: cmd\n") && script.Output.Contains("/d /s /c \"\"" + Path.Combine(root, "echo script.cmd") + "\" \"a b\"\"\n"), "cmd engine: " + script.Output);
+                Assert(script.Output.Contains("  1: [a b]\n"), "cmd tail argv: " + script.Output);
+                var alone = Run(launcher, "--echo");
+                Assert(alone.Code == 0 && alone.Output.Contains("No -- tail"), "echo alone: " + alone.Output);
+                var failure = Run(launcher, "--echo --engine no-such-engine -- tool.exe");
+                Assert(failure.Code == LaunchFailureExitCode && failure.Output.Contains("cannot be built: Unknown engine"), "echo failure: " + failure.Output);
+            });
+            Test("echo with no console shows a message box", () =>
+            {
+                // The outer launcher has no console and hands the inner one NUL, as a shortcut or the Run dialog would.
+                using var process = Start(launcher, "--stdout NUL -- " + Quote(launcher) + " --echo -- tool.exe \"a b\"");
+                try
+                {
+                    nint dialog = 0;
+                    WaitFor(() => (dialog = FindWindowEx(0, 0, DialogWindowClass, EchoCaption)) != 0, "no echo message box");
+                    var buffer = new char[EchoTextCharacters];
+                    var length = GetWindowText(GetDlgItem(dialog, MessageBoxTextControl), buffer, buffer.Length);
+                    var text = new string(buffer, 0, length);
+                    SendMessage(dialog, WmCommand, DialogCancel, 0);
+                    Assert(process.WaitForExit(LauncherExitTimeoutMilliseconds) && process.ExitCode == 0, "outer launcher did not end cleanly");
+                    Assert(text.Contains("Child command line:") && text.Contains("Child arguments, as the C runtime splits them:\n  0: [tool.exe]\n  1: [a b]\n") && text.Contains("Ctrl+C copies"), "message box text: " + text);
+                }
+                finally
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(true);
+                    }
+                }
             });
             Test("timeout writes redirected diagnostic", () =>
             {

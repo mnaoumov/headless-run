@@ -39,6 +39,7 @@ internal sealed class Options
     public uint PriorityClass;
     public bool Help;
     public bool Version;
+    public bool Echo;
     public uint Timeout = uint.MaxValue;
     public string Tail = "";
     public Dictionary<string, string> Environment = new(StringComparer.OrdinalIgnoreCase);
@@ -143,6 +144,9 @@ internal sealed class Options
                 case "--version":
                     Version = true;
                     break;
+                case "--echo":
+                    Echo = true;
+                    break;
                 case "--timeout":
                     Timeout = ParseDuration(ReadValue(flag));
                     break;
@@ -166,7 +170,8 @@ internal sealed class Options
             return;
         }
 
-        if (Tail.Length == 0)
+        // --echo alone still shows what the launcher received.
+        if (Tail.Length == 0 && !Echo)
         {
             throw new ArgumentException("Expected -- followed by a program and its arguments.");
         }
@@ -243,8 +248,9 @@ internal sealed class Options
         }
     }
 
-    // Windows quote/backslash rules, used ONLY for our own option prefix.
-    internal static string ReadToken(string text, ref int position)
+    // Windows quote/backslash rules, used ONLY for our own option prefix, and by --echo to show a split.
+    // unclosedRunsToEnd: an unclosed quote ends the token at the end of the text, as the C runtime reads it.
+    internal static string ReadToken(string text, ref int position, bool unclosedRunsToEnd = false)
     {
         SkipSpace(text, ref position);
         StringBuilder value = new();
@@ -285,7 +291,7 @@ internal sealed class Options
                 }
             }
         }
-        if (quoted)
+        if (quoted && !unclosedRunsToEnd)
         {
             throw new ArgumentException("Unclosed quote in launcher options.");
         }
