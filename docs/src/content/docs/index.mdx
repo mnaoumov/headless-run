@@ -1,0 +1,43 @@
+---
+title: headless-run
+description: Run a Windows console program without a console window, keep its exact command line, and return its exit code.
+template: splash
+editUrl: false
+lastUpdated: false
+hero:
+    title: headless-run
+    tagline: Run a Windows console program without a console window, keep its exact command line, and return its exit code. Designed for Task Scheduler and background automation.
+    image:
+        alt: headless-run logo
+        file: ../../assets/logo.svg
+    actions:
+        - text: Getting started
+          link: /headless-run/guides/getting-started/
+          icon: rocket
+        - text: Options
+          link: /headless-run/guides/options/
+          icon: open-book
+          variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components'
+
+<CardGrid stagger>
+    <Card title="The command line, untouched" icon="seti:shell">
+        Everything after `--` reaches the child exactly as typed. [Calling it from a shell](./guides/calling-from-a-shell/) shows the same call from every shell, and each example runs as a test.
+    </Card>
+
+    <Card title="Scripts by extension" icon="document">
+        A `.ps1`, `.cmd`, `.py`, `.ts` or other script runs under its [engine](./guides/programs-and-scripts/), which a [config file](./guides/configuration/) can add or change.
+    </Card>
+
+    <Card title="Contained and bounded" icon="approve-check">
+        A kill-on-close job ends the whole process tree, `--timeout` bounds a run, and the [exit code](./guides/exit-codes-and-lifetime/) is the child's.
+    </Card>
+
+    <Card title="Visible when you want it" icon="laptop">
+        A [tray icon](./guides/tray-icon/) shows the output of a job started by hand, the [event log](./guides/event-log/) records each run, and [elevation](./guides/elevation/) relays everything back.
+    </Card>
+</CardGrid>
+
+Release history is in the [CHANGELOG](https://github.com/mnaoumov/headless-run/blob/main/CHANGELOG.md).
