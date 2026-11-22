@@ -12,6 +12,9 @@ internal static class Program
     private const int DetachedChildDelayMilliseconds = 500;
     private const int LauncherExitTimeoutMilliseconds = 10000;
     private const int LaunchTimeoutMilliseconds = 15000;
+    // An x86 launcher starts the 32-bit Windows PowerShell from SysWOW64, whose first start on a fresh CI runner has taken
+    // over 15 s (no native images yet); a real hang still fails, only later.
+    private const int WindowsPowerShellLaunchTimeoutMilliseconds = 90000;
     private const int ConditionTimeoutMilliseconds = 10000;
     private const int ConditionPollMilliseconds = 25;
     private const int TimeoutExitCode = 124;
@@ -393,7 +396,7 @@ internal static class Program
                 Assert(run.Output == "[a b] [$env:HEADLESS_TEST] Core", "pwsh arguments: " + run.Output);
                 foreach (var engine in new[] { "--engine powershell", "--engine=powershell", "--engine PowerShell" })
                 {
-                    var legacy = Run(launcher, engine + " -- " + Quote(script) + " \"a b\" c");
+                    var legacy = Run(launcher, engine + " -- " + Quote(script) + " \"a b\" c", timeoutMilliseconds: WindowsPowerShellLaunchTimeoutMilliseconds);
                     Assert(legacy.Code == 7 && legacy.Output == "[a b] [c] Desktop", engine + ": " + legacy.Output + legacy.Error);
                 }
 
@@ -1322,12 +1325,12 @@ internal static class Program
         return process;
     }
     private static (int Code, string Output, string Error) Run(string executable, string arguments, bool relay = false, string? input = null, string? directory = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null, int timeoutMilliseconds = LaunchTimeoutMilliseconds)
     {
         using var process = Start(executable, arguments, relay, input, directory, environment);
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(LaunchTimeoutMilliseconds))
+        if (!process.WaitForExit(timeoutMilliseconds))
         {
             process.Kill(true);
             throw new Exception("Launch hung: " + arguments);
