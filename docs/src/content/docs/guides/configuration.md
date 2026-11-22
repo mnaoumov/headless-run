@@ -1,11 +1,11 @@
 ---
 title: Configuration
-description: Config files that add or change engines, and the config command that edits them.
+description: Config files that add or change engines and output defaults, and the config command that edits them.
 sidebar:
     order: 4
 ---
 
-Config files add engines, change a built-in one, or change which engine an extension runs under. They are read in this order, and a key set in a later one replaces the same key of an earlier one:
+Config files add engines, change a built-in one, change which engine an extension runs under, or set a default size cap for output files. They are read in this order, and a key set in a later one replaces the same key of an earlier one:
 
 1. The [built-in engines](/headless-run/guides/programs-and-scripts/).
 2. **System**: `%ProgramData%\headless-run\config.json`, for every account. A Task Scheduler job that runs as `SYSTEM` or a service account reads this one, since its `%APPDATA%` is not yours.
@@ -32,6 +32,9 @@ A config file is strict JSON, without comments, so that `headless-run config` ca
   },
   "extension": {
     "js": "deno"
+  },
+  "output": {
+    "maxSize": "10M"
   }
 }
 ```
@@ -41,6 +44,7 @@ A config file is strict JSON, without comments, so that `headless-run config` ca
 3. `engine.<name>.extensions`: the extensions `--engine` accepts without `--force-engine`.
 4. `engine.<name>.quoteCommand`: `true` wraps the raw text in one quote pair, as `cmd.exe /s /c` needs.
 5. `extension.<ext>`: the engine an extension runs under when no `--engine` is given, by extension without its dot. An extension mapped to an engine is accepted by it too.
+6. `output.maxSize`: the default for [`--max-size`](/headless-run/guides/options/), so every `--append` job on the machine keeps its output files bounded with no flag. A string such as `"10M"`, or a byte count; `"none"` turns off a cap that a lower layer set. `--max-size` on the command line wins over it.
 
 Engine names have letters, digits, `-` and `_`, and are compared without case. A key replaces the same key below it, so `engine.python.path` in the global file keeps the built-in `python` engine's extensions. The schema at `$schema` lets an editor validate and complete the file.
 
@@ -63,6 +67,7 @@ With no scope, `--edit` and every write go to `--global`. `--system` writes need
 ```text
 headless-run config --global engine.python.path C:\Python313\python.exe
 headless-run config --global extension.js deno
+headless-run config --system output.maxSize 10M
 headless-run config --list --show-origin
 headless-run config --unset engine.python
 ```

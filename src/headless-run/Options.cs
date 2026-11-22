@@ -10,7 +10,7 @@ internal sealed class Options
     private const int MINUTES_IN_HOUR = 60;
     private const int BackslashesInEscapedPair = 2;
     private const string TrayOption = "--tray";
-    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority", "--elevated-relay", "--engine", "--config"];
+    private static readonly HashSet<string> ValueOptions = ["--stdout", "--stderr", "--cwd", "--timeout", "--env", "--priority", "--elevated-relay", "--engine", "--config", "--max-size"];
     private static readonly Dictionary<string, uint> PriorityClasses = new(StringComparer.Ordinal)
     {
         ["idle"] = Native.IdlePriorityClass,
@@ -24,6 +24,9 @@ internal sealed class Options
     public string? Error;
     public string? Directory;
     public bool Append;
+    // --max-size: the cap in bytes, null for none; MaxSizeGiven tells "none" from an omitted option.
+    public long? MaxSize;
+    public bool MaxSizeGiven;
     public bool Detach;
     public bool CreateDirectory;
     public string? Engine;
@@ -93,6 +96,10 @@ internal sealed class Options
                     break;
                 case "--overwrite":
                     Append = false;
+                    break;
+                case "--max-size":
+                    MaxSize = OutputRotation.ParseSize(ReadValue(flag), flag);
+                    MaxSizeGiven = true;
                     break;
                 case "--detach":
                     Detach = true;

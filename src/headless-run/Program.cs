@@ -106,17 +106,25 @@ internal static class Program
             resources.Handle(caller);
         }
 
-        var (application, commandLine, _) = ResolveCommand(options);
+        var config = EngineTable.Load(options.ConfigFile);
+        var (application, commandLine, _) = ResolveCommand(options, config);
         PrepareWorkingDirectory(options);
         // Under --elevate the unelevated caller hosts the icon, so the elevated copy never shows a second one.
         var capture = options.Tray && caller == 0 ? new OutputCapture() : null;
         var sharedFile = SharesFile(options);
+        // Before the tray follows the files, so a rotated file is followed from its new, empty start.
+        var rotationProblems = OutputRotation.Apply(options, OutputRotation.Cap(options, config), sharedFile);
         capture?.FollowLogs(options, sharedFile);
         var input = StandardHandle(Native.StandardInputHandle, null, false, true, resources);
         var output = StandardHandle(Native.StandardOutputHandle, options.Output, options.Append, false, resources);
         var error = sharedFile ? output : StandardHandle(Native.StandardErrorHandle, options.Error, options.Append, false, resources);
         // Launcher diagnostics go where the child's stderr would have gone, never into a tee's pipe.
         var diagnostics = error;
+        foreach (var problem in rotationProblems)
+        {
+            Diagnose(diagnostics, capture, problem);
+        }
+
         // A tee forwards to the handle the child would otherwise have had, NUL included.
         using var outputTee = options.Output is null && capture is not null ? new Tee(output, capture.NewSource()) : null;
         using var errorTee = options.Error is null && capture is not null ? new Tee(error, capture.NewSource()) : null;
@@ -301,10 +309,10 @@ internal static class Program
 
     // A native executable gets the raw tail unchanged. A script goes to its engine's interpreter,
     // which then applies its own argument rules to the same raw text.
-    internal static (string? Application, string CommandLine, Engine? Engine) ResolveCommand(Options options)
+    internal static (string? Application, string CommandLine, Engine? Engine) ResolveCommand(Options options, EngineTable? config = null)
     {
         var extension = ProgramExtension(options.Tail);
-        var engine = EngineTable.Load(options.ConfigFile).Select(options.Engine, extension, options.ForceEngine);
+        var engine = (config ?? EngineTable.Load(options.ConfigFile)).Select(options.Engine, extension, options.ForceEngine);
         if (engine is null)
         {
             return (null, options.Tail, null);
@@ -471,6 +479,8 @@ internal static class Program
         --stderr FILE         Redirect stderr and launcher diagnostics
         --append              Append both output files
         --overwrite           Overwrite both output files (default)
+        --max-size SIZE       With --append, first move a file over SIZE (10M, 512K,
+                              1G or bytes) to FILE.1; none turns a config default off
         --cwd DIR             Child working directory; must exist
         --create-cwd          Create the --cwd directory when it is missing
         --env NAME=VALUE      Override an environment variable (repeatable)

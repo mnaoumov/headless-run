@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/mnaoumov/headless-run/main/config.schema.json",
   "title": "headless-run config",
-  "description": "Engines for headless-run: %APPDATA%\\headless-run\\config.json, %ProgramData%\\headless-run\\config.json, or a file passed with --config.",
+  "description": "Engines and output defaults for headless-run:%APPDATA%\\headless-run\\config.json, %ProgramData%\\headless-run\\config.json, or a file passed with --config.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -67,6 +67,26 @@
       "additionalProperties": {
         "type": "string",
         "pattern": "^[A-Za-z0-9_-]+$"
+      }
+    },
+    "output": {
+      "description": "Defaults for the --stdout and --stderr files.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxSize": {
+          "description": "The --max-size default: before an --append run, a file over this size moves to FILE.1, replacing an older backup. Bytes, or a number with K, M or G (1024-based), such as \"10M\"; \"none\" turns off a cap a lower layer set.",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^([0-9]*[1-9][0-9]*([KkMmGg]([Ii]?[Bb])?|[Bb])?|[Nn][Oo][Nn][Ee])$"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        }
       }
     }
   }

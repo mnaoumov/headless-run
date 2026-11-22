@@ -184,6 +184,69 @@ internal static class Program
                 var inherited = Run(launcher, "-- " + Quote(Self) + " child streams");
                 Assert(inherited.Output == "stdout\n" && inherited.Error == "stderr\n", "inherited pipes");
             });
+            Test("--max-size moves an appended file over the cap to one .1 backup", () =>
+            {
+                const string OverCap = "0123456789";
+                var output = Path.Combine(root, "rotated out.txt");
+                var error = Path.Combine(root, "rotated err.txt");
+                var backup = output + ".1";
+                var child = " -- " + Quote(Self) + " child streams";
+                var flags = "--append --stdout " + Quote(output) + " --stderr " + Quote(error);
+                (int Code, string Output, string Error) Rotate(string options)
+                {
+                    var result = Run(launcher, flags + " " + options + child);
+                    Assert(result.Code == 0, options + ": " + result.Code + " " + result.Error);
+                    return result;
+                }
+
+                Rotate("--max-size 8");
+                Assert(File.ReadAllText(output) == "stdout\n" && !File.Exists(backup), "first run");
+                Rotate("--max-size=8");
+                Assert(File.ReadAllText(output) == "stdout\nstdout\n" && !File.Exists(backup), "under the cap before the run, so appended");
+                Rotate("--max-size 8B");
+                Assert(File.ReadAllText(output) == "stdout\n" && File.ReadAllText(backup) == "stdout\nstdout\n", "rotated");
+                Assert(File.ReadAllText(error) == "stderr\n" && File.ReadAllText(error + ".1") == "stderr\nstderr\n", "stderr rotated");
+                File.WriteAllText(output, OverCap);
+                Rotate("--max-size 8");
+                Assert(File.ReadAllText(output) == "stdout\n" && File.ReadAllText(backup) == OverCap, "older backup replaced");
+                File.WriteAllText(output, OverCap);
+                Rotate("--max-size 1k");
+                Assert(File.ReadAllText(output) == OverCap + "stdout\n", "1k is 1024 bytes");
+                // An overwritten file never grows across runs, so the cap leaves it alone.
+                File.WriteAllText(output, OverCap);
+                File.WriteAllText(backup, "kept");
+                Assert(Run(launcher, "--stdout " + Quote(output) + " --max-size 8" + child).Code == 0, "overwrite launch");
+                Assert(File.ReadAllText(output) == "stdout\n" && File.ReadAllText(backup) == "kept", "no rotation without --append");
+                var shared = Path.Combine(root, "rotated shared.txt");
+                File.WriteAllText(shared, OverCap);
+                Assert(Run(launcher, "--append --max-size 8 --stdout " + Quote(shared) + " --stderr " + Quote(shared) + child).Code == 0, "shared launch");
+                Assert(File.ReadAllText(shared) == "stdout\nstderr\n" && File.ReadAllText(shared + ".1") == OverCap, "a shared file rotates once");
+                // The config default, and none turning it off for one run.
+                var config = Path.Combine(root, "rotation.json");
+                File.WriteAllText(config, "{\"output\": {\"maxSize\": 8}}");
+                File.WriteAllText(output, OverCap);
+                Rotate("--config " + Quote(config) + " --max-size none");
+                Assert(File.ReadAllText(output) == OverCap + "stdout\n", "none overrides the config");
+                Rotate("--config " + Quote(config));
+                Assert(File.ReadAllText(output) == "stdout\n" && File.ReadAllText(backup) == OverCap + "stdout\n", "config default");
+                File.WriteAllText(config, "{\"output\": {\"maxSize\": \"none\"}}");
+                File.WriteAllText(output, OverCap);
+                Rotate("--config " + Quote(config));
+                Assert(File.ReadAllText(output) == OverCap + "stdout\n", "config none");
+                File.WriteAllText(config, "{\"output\": {\"maxSize\": \"0\"}}");
+                var refused = Run(launcher, flags + " --config " + Quote(config) + child);
+                Assert(refused.Code == LaunchFailureExitCode && File.ReadAllText(error).Contains("output.maxSize"), "config 0 refused: " + File.ReadAllText(error));
+                // A file held without delete sharing cannot be moved: the run appends to it and says so.
+                File.WriteAllText(output, OverCap);
+                File.Delete(error);
+                using (new FileStream(output, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    Rotate("--max-size 8");
+                }
+
+                Assert(File.ReadAllText(output) == OverCap + "stdout\n", "held file appended to");
+                Assert(File.ReadAllText(error).Contains("could not be moved") && File.ReadAllText(error).EndsWith("stderr\n", StringComparison.Ordinal), "held file diagnostic: " + File.ReadAllText(error));
+            });
             Test("cwd, environment, priority and hidden console", () =>
             {
                 var directory = Path.Combine(root, "working directory");
@@ -465,7 +528,10 @@ internal static class Program
                 Assert(Config("--unset engine.probe.arguments").Code == 0, "unset a key");
                 Assert(Probe().Output == "system|run me.probe|a|b c\n", "unset falls back to system");
                 Assert(Config("--unset engine.probe").Code == 0 && Config("--unset engine.probe").Code == ConfigNothingToUnset, "unset an engine");
-                foreach (var bad in new[] { "bogus.key 1", "engine.probe.quoteCommand maybe", "engine.probe.extensions .a.b", "--add extension.probe x", "--global --system --list", "--list --edit", "--show-origin engine.probe.path", "--frobnicate", "--file", "engine.probe.path a b" })
+                Ok("Output.MaxSize 10M");
+                Assert(Config("output.maxSize").Output == "10M\n" && File.ReadAllText(global).Contains("\"maxSize\": \"10M\""), "output.maxSize set");
+                Assert(Config("--unset output.maxSize").Code == 0 && Config("output.maxSize").Code == ConfigKeyNotFound, "output.maxSize unset");
+                foreach (var bad in new[] { "output.maxSize 0", "output.maxSize lots", "--add output.maxSize 1K", "output.other 1", "bogus.key 1", "engine.probe.quoteCommand maybe", "engine.probe.extensions .a.b", "--add extension.probe x", "--global --system --list", "--list --edit", "--show-origin engine.probe.path", "--frobnicate", "--file", "engine.probe.path a b" })
                 {
                     var refused = Config(bad);
                     Assert(refused.Code == LaunchFailureExitCode && refused.Error.Contains("headless-run:"), "config " + bad + ": " + refused.Code + " " + refused.Error);
@@ -510,7 +576,7 @@ internal static class Program
             });
             Test("launch and usage failures produce diagnostics", () =>
             {
-                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--tray --detach -- x", "--tray=yes -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0", "--force-engine -- x", "--engine -- x", "--engine= -- x", "--engine nope -- x.js", "--config " + Quote(Path.Combine(root, "absent.json")) + " -- " + Quote(Self) + " child exit 0", "--force-engine=yes -- x" })
+                foreach (var command in new[] { "-- missing-headless-test-" + Guid.NewGuid() + ".exe", "--bad", "--", "", "--timeout 0s -- x", "--timeout -1s -- x", "--timeout 1 -- x", "--timeout 999999999h -- x", "--detach --timeout 1s -- x", "--tray --detach -- x", "--tray=yes -- x", "--env broken -- x", "--cwd", "--cwd \"\" -- x", "--cwd \"unterminated", "--below-normal -- x", "--priority bogus -- x", "--priority -- x", "--priority= -- x", "--append=yes -- x", "--bad=1 -- x", "--elevate=yes -- x", "--elevated-relay bogus -- x", "--windows-powershell -- " + Quote(Self) + " child exit 0", "--force-engine -- x", "--engine -- x", "--engine= -- x", "--engine nope -- x.js", "--config " + Quote(Path.Combine(root, "absent.json")) + " -- " + Quote(Self) + " child exit 0", "--force-engine=yes -- x", "--max-size 0 -- x", "--max-size 10X -- x", "--max-size -5 -- x", "--max-size -- x", "--max-size 99999999999G -- x" })
                 {
                     var run = Run(launcher, command);
                     Assert(run.Code == LaunchFailureExitCode && run.Error.Contains("headless-run:"), "missing failure: " + command);

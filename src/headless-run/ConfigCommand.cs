@@ -20,7 +20,7 @@ internal static class ConfigCommand
           --add <key> <value>         Append to path, arguments or extensions
           --unset <key>               Remove a key, or a whole engine.<name>
         Keys: engine.<name>.path, engine.<name>.arguments, engine.<name>.extensions,
-              engine.<name>.quoteCommand, extension.<ext>
+              engine.<name>.quoteCommand, extension.<ext>, output.maxSize
         Writes go to --global unless a scope is given. Exit: 0; 1 key not set;
         5 nothing to unset; 125 invalid usage or config.
         """ + "\n";
@@ -229,6 +229,17 @@ internal static class ConfigCommand
             }
 
             Section(root, ConfigKeys.ExtensionSection)[Existing(Section(root, ConfigKeys.ExtensionSection), key.Name) ?? key.Name] = value;
+        }
+        else if (key.Section == ConfigKeys.OutputSection)
+        {
+            if (add)
+            {
+                throw new ArgumentException($"--add needs an array key; {key.Text} holds one size.");
+            }
+
+            OutputRotation.ParseSize(value, key.Text);
+            var output = Section(root, ConfigKeys.OutputSection);
+            output[Existing(output, key.Name) ?? key.Name] = value;
         }
         else
         {
