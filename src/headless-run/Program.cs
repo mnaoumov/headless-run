@@ -28,6 +28,7 @@ internal static class Program
         try
         {
             options.Parse(commandLine);
+            OutputNames.Expand(options);
             if (options.Help || options.Version)
             {
                 var text = options.Help ? Help : "headless-run 1.0.0\n";
@@ -338,7 +339,7 @@ internal static class Program
     }
 
     // The program token as CreateProcessW reads it: up to the closing quote, or up to whitespace.
-    private static string ProgramToken(string tail)
+    internal static string ProgramToken(string tail)
     {
         if (tail.StartsWith('"'))
         {
@@ -478,6 +479,8 @@ internal static class Program
         --stdout FILE         Redirect stdout (overwrite by default)
         --stderr FILE         Redirect stderr and launcher diagnostics
         --append              Append both output files
+                              Output paths may hold <date>, <time>, <program> and <pid>,
+                              filled in at start, for one file per run
         --overwrite           Overwrite both output files (default)
         --max-size SIZE       With --append, first move a file over SIZE (10M, 512K,
                               1G or bytes) to FILE.1; none turns a config default off
