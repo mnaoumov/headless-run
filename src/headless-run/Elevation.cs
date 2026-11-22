@@ -169,9 +169,8 @@ internal static class Elevation
         }
     }
 
-    // The elevated copy's side: adopt the caller's environment, directory and streams.
-    // Returns a handle that is signaled when the caller exits.
-    internal static nint Attach(Options options)
+    // The unelevated caller's pid, from --elevated-relay <caller pid>:<pipe base>.
+    internal static uint CallerId(Options options)
     {
         var separator = options.ElevatedRelay!.IndexOf(':');
         if (separator <= 0 || !uint.TryParse(options.ElevatedRelay[..separator], out var callerId))
@@ -179,7 +178,16 @@ internal static class Elevation
             throw new ArgumentException("--elevated-relay is internal to --elevate.");
         }
 
-        var name = options.ElevatedRelay[(separator + 1)..];
+        return callerId;
+    }
+
+    // The elevated copy's side: adopt the caller's environment, directory and streams.
+    // Returns a handle that is signaled when the caller exits.
+    internal static nint Attach(Options options)
+    {
+        var callerId = CallerId(options);
+        var relay = options.ElevatedRelay!;
+        var name = relay[(relay.IndexOf(':') + 1)..];
         var caller = Native.OpenProcess(Native.Synchronize, false, callerId);
         if (caller == 0)
         {

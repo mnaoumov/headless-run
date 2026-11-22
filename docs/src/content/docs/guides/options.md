@@ -7,7 +7,7 @@ sidebar:
 
 All launcher options precede `--`. Values use Windows double-quote/backslash rules. Every option that takes a value accepts both `--name VALUE` and `--name=VALUE`, such as `--priority=below-normal` or `--env=NAME=VALUE`. Repeating an option uses its last value; `--env` keeps the last value per case-insensitive name.
 
-1. `--stdout FILE`: redirect standard output to a file; overwrite by default. Missing parent directories are created.
+1. `--stdout FILE`: redirect standard output to a file; overwrite by default. Missing parent directories are created. The path can hold `<date>`, `<time>`, `<program>` and `<pid>`: see [One file per run](#one-file-per-run).
 2. `--stderr FILE`: redirect standard error and launcher diagnostics to a file; overwrite by default once stream setup reaches it. Diagnostics before stream setup append to preserve earlier messages. An error in the options can use only a `--stderr` parsed before that error. Missing parent directories are created.
 3. `--append`: append both redirected files. Each write appends, including writes from descendants.
 4. `--overwrite`: overwrite both redirected files (default). The last append/overwrite flag wins regardless of its position.
@@ -27,6 +27,25 @@ All launcher options precede `--`. Values use Windows double-quote/backslash rul
 18. `--echo`: start nothing, and show what the launcher received and what it would start. See [Checking what a caller passes](#checking-what-a-caller-passes).
 19. `--help`: print usage and exit 0. Use `--stdout FILE` to view it when no output handle exists.
 20. `--version`: print the version and exit 0. Supports `--stdout FILE` too.
+
+## One file per run
+
+A `--stdout` or `--stderr` path can hold placeholders, which the launcher fills in when it starts:
+
+1. `<date>`: the launcher's start date, local time, as `yyyy-MM-dd`, such as `2026-11-21`.
+2. `<time>`: its start time, local time, as `HH-mm-ss`, such as `07-30-00`.
+3. `<program>`: the program's file name without its extension, such as `backup` for `C:\Scripts\backup.ps1`.
+4. `<pid>`: the launcher's process id, which tells apart two runs started in the same second.
+
+So a scheduled task can keep each run's output, with no wrapper script, although Task Scheduler expands nothing in its **Add arguments** field:
+
+```text
+--stdout "C:\Logs\<program>.<date>.<time>.log" --stderr "C:\Logs\<program>.<date>.<time>.log" -- C:\Scripts\backup.ps1
+```
+
+Names are case-insensitive, and a placeholder may appear in a directory part too, such as `C:\Logs\<date>\<program>.log`, whose missing directory is created. `<` and `>` cannot appear in a Windows file name, so a placeholder never collides with a real path and no escape is needed: a `<` or `>` that does not form a known placeholder is a launcher failure (125). From `cmd` or PowerShell, quote the path, since both shells read a bare `<` or `>` as a redirection. Under `--elevate` the elevated copy uses the unelevated launcher's start time and process id, so both name the same file. The pair with `--max-size` is the choice between one file per run and one capped file appended to. The idea comes from `hide-win32-console-window`, which names each run's log after the program and its start time.
+
+## Standard handles
 
 Unredirected standard handles are inherited when available and otherwise connect to `NUL`. Standard input follows that rule too. If stdout and stderr name the same absolute path, both share one file handle. Files open with read/write/delete sharing; only `--max-size` rotates them, and only before the child starts.
 

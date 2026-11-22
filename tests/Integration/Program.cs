@@ -247,6 +247,49 @@ internal static class Program
                 Assert(File.ReadAllText(output) == OverCap + "stdout\n", "held file appended to");
                 Assert(File.ReadAllText(error).Contains("could not be moved") && File.ReadAllText(error).EndsWith("stderr\n", StringComparison.Ordinal), "held file diagnostic: " + File.ReadAllText(error));
             });
+            Test("<date>, <time>, <program> and <pid> name one output file per run", () =>
+            {
+                const int ClockSlackMinutes = 5;
+                var directory = Path.Combine(root, "per run");
+                var child = " -- " + Quote(Self) + " child streams";
+                var program = Path.GetFileNameWithoutExtension(Self);
+                // Returns the launcher's pid, read here, to check <pid> and pick the run's file.
+                int Launch(string options, bool relay = false)
+                {
+                    using var process = Start(launcher, options + child, relay);
+                    var error = process.StandardError.ReadToEndAsync();
+                    process.StandardOutput.ReadToEnd();
+                    Assert(process.WaitForExit(LaunchTimeoutMilliseconds), "launch hung: " + options);
+                    Assert(process.ExitCode == 0, options + ": " + process.ExitCode + " " + error.GetAwaiter().GetResult());
+                    return process.Id;
+                }
+
+                var pattern = Path.Combine(directory, "<program>.<DATE>.<time>.<pid>.out");
+                var first = Launch("--stdout " + Quote(pattern) + " --stderr " + Quote(Path.Combine(directory, "<program>.<pid>.err")));
+                var second = Launch("--stdout " + Quote(pattern));
+                foreach (var pid in new[] { first, second })
+                {
+                    var matches = Directory.GetFiles(directory, program + ".*." + pid + ".out");
+                    Assert(matches.Length == 1 && File.ReadAllText(matches[0]) == "stdout\n", "one file for run " + pid + ": " + string.Join(", ", Directory.GetFiles(directory)));
+                    var stamp = Path.GetFileName(matches[0])[(program.Length + 1)..^(("." + pid + ".out").Length)];
+                    Assert(DateTime.TryParseExact(stamp, "yyyy-MM-dd.HH-mm-ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var started)
+                        && Math.Abs((DateTime.Now - started).TotalMinutes) < ClockSlackMinutes, "start stamp: " + stamp);
+                }
+
+                Assert(File.ReadAllText(Path.Combine(directory, program + "." + first + ".err")) == "stderr\n", "stderr placeholders");
+                // A placeholder in a directory part: the missing directory is created.
+                Launch("--stdout " + Quote(Path.Combine(directory, "<date>", "<program>.out")));
+                Assert(File.ReadAllText(Path.Combine(directory, DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), program + ".out")) == "stdout\n", "directory placeholder");
+                foreach (var (path, problem) in new[] { ("<nope>.out", "unknown placeholder '<nope>'"), ("a>b.out", "no '<' before it"), ("<date.out", "no closing '>'") })
+                {
+                    var refused = Run(launcher, "--stdout " + Quote(Path.Combine(directory, path)) + child);
+                    Assert(refused.Code == LaunchFailureExitCode && refused.Error.Contains(problem), path + ": " + refused.Code + " " + refused.Error);
+                }
+
+                // Under --elevate the copy names the caller's file: its pid and start time, not its own.
+                var caller = Launch("--elevate --stdout " + Quote(Path.Combine(directory, "elevated.<pid>.out")), relay: true);
+                Assert(File.ReadAllText(Path.Combine(directory, "elevated." + caller + ".out")) == "stdout\n", "relayed placeholders: " + string.Join(", ", Directory.GetFiles(directory)));
+            });
             Test("cwd, environment, priority and hidden console", () =>
             {
                 var directory = Path.Combine(root, "working directory");
