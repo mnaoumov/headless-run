@@ -17,12 +17,14 @@ internal static class ConfigKeys
     internal const string Arguments = "arguments";
     internal const string Extensions = "extensions";
     internal const string QuoteCommand = "quoteCommand";
+    internal const string OutputSection = "output";
+    internal const string MaxSize = "maxSize";
     internal const string SchemaProperty = "$schema";
     internal const string SchemaUrl = "https://raw.githubusercontent.com/mnaoumov/headless-run/main/config.schema.json";
     internal static readonly string[] EngineFields = [Path, Arguments, Extensions, QuoteCommand];
 }
 
-// engine.<name>.<field>, engine.<name> (unset only) or extension.<ext>.
+// engine.<name>.<field>, engine.<name> (unset only), extension.<ext> or output.maxSize.
 internal readonly record struct ConfigKey(string Section, string Name, string? Field)
 {
     internal string Text => Field is null ? Section + "." + Name : Section + "." + Name + "." + Field;
@@ -51,9 +53,15 @@ internal readonly record struct ConfigKey(string Section, string Name, string? F
             return new(ConfigKeys.ExtensionSection, parts[1].ToLowerInvariant(), null);
         }
 
+        if (parts.Length == 2 && parts[0].Equals(ConfigKeys.OutputSection, StringComparison.OrdinalIgnoreCase)
+            && parts[1].Equals(ConfigKeys.MaxSize, StringComparison.OrdinalIgnoreCase))
+        {
+            return new(ConfigKeys.OutputSection, ConfigKeys.MaxSize, null);
+        }
+
         throw new ArgumentException(
             $"Invalid key '{key}'. Keys are engine.<name>.path, engine.<name>.arguments, engine.<name>.extensions, " +
-            "engine.<name>.quoteCommand and extension.<ext>, with names of letters, digits, '-' and '_'.");
+            "engine.<name>.quoteCommand, extension.<ext> and output.maxSize, with names of letters, digits, '-' and '_'.");
     }
 
     internal static bool IsName(string name)
@@ -143,8 +151,12 @@ internal static class ConfigFile
                     case ConfigKeys.ExtensionSection:
                         ReadExtensions(property.Value);
                         break;
+                    case ConfigKeys.OutputSection:
+                        ReadOutput(property.Value);
+                        break;
                     default:
-                        Require(false, property.Name, $"unknown key; expected {ConfigKeys.EngineSection}, {ConfigKeys.ExtensionSection} or {ConfigKeys.SchemaProperty}");
+                        Require(false, property.Name,
+                            $"unknown key; expected {ConfigKeys.EngineSection}, {ConfigKeys.ExtensionSection}, {ConfigKeys.OutputSection} or {ConfigKeys.SchemaProperty}");
                         break;
                 }
             }
@@ -201,6 +213,33 @@ internal static class ConfigFile
                 Require(ConfigKey.IsName(name), key, "an extension has only letters, digits, '-' and '_'");
                 Require(extension.Value.ValueKind == JsonValueKind.String && ConfigKey.IsName(extension.Value.GetString()!), key, "must be an engine name");
                 entries.Add(new(ConfigKeys.ExtensionSection + "." + name.ToLowerInvariant(), [extension.Value.GetString()!], origin));
+            }
+        }
+
+        void ReadOutput(JsonElement output)
+        {
+            Require(output.ValueKind == JsonValueKind.Object, ConfigKeys.OutputSection, "must be an object");
+            foreach (var field in output.EnumerateObject())
+            {
+                var key = ConfigKeys.OutputSection + "." + field.Name;
+                Require(field.Name == ConfigKeys.MaxSize, key, $"unknown key; {ConfigKeys.OutputSection} has {ConfigKeys.MaxSize}");
+                // A size such as "10M", a byte count, or "none" to turn off a lower layer's cap.
+                var value = field.Value.ValueKind switch
+                {
+                    JsonValueKind.String => field.Value.GetString()!,
+                    JsonValueKind.Number => field.Value.GetRawText(),
+                    _ => ""
+                };
+                try
+                {
+                    OutputRotation.ParseSize(value, key);
+                }
+                catch (ArgumentException error)
+                {
+                    Require(false, key, error.Message.TrimEnd('.'));
+                }
+
+                entries.Add(new(key, [value], origin));
             }
         }
 
