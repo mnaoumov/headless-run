@@ -37,7 +37,17 @@ For a scheduled task, `~\scoop\apps\headless-run\current\headless-run.exe` is th
 
 Or download `headless-run-win-x64.exe`, `headless-run-win-x86.exe` or `headless-run-win-arm64.exe` from [Releases](https://github.com/mnaoumov/headless-run/releases), verify it against the adjacent `.sha256` file, and rename it to `headless-run.exe` in a directory on `PATH`.
 
-The binaries are unsigned; Windows may ask you to confirm a downloaded executable.
+The release executables are moving to code signing through the SignPath Foundation (see [Code signing policy](#code-signing-policy)). Until a signed release ships, Windows may ask you to confirm a downloaded executable.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+1. Only the executables built from this repository by its GitHub Actions release workflow, on GitHub-hosted runners, are submitted for signing.
+2. Committers and reviewers: [Michael Naumov](https://github.com/mnaoumov), the sole maintainer.
+3. Approvers: [Michael Naumov](https://github.com/mnaoumov), who approves every signing request.
+
+Privacy: this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. It makes no network connections at all. The only thing it writes outside the files you name is an optional entry in the local Windows Application event log (`--event-log`).
 
 ## See also
 
