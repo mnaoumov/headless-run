@@ -10,7 +10,7 @@ sidebar:
 1. **Already elevated**: the option does nothing, so a script can pass it unconditionally.
 2. **Not elevated**: Windows shows its UAC prompt, and an elevated copy of `headless-run` runs the child. The copy relays everything back to the caller, so the call behaves as it would without the option. Standard input, output and error go through named pipes. The copy receives the caller's environment variables and working directory, so relative paths resolve as usual. The exit code is the child's, and 124 and 125 keep their meaning. Every other option applies in the copy. Killing the caller ends the copy and the whole tree, as it does without the option.
 3. **Prompt declined**: nothing runs, and the launcher fails with 125.
-4. **Non-interactive session**: a service, a task that runs whether the user is logged on or not (S4U), and session 0 cannot show the prompt. The launcher fails at once with 125 rather than waiting for a consent that cannot come. Set such a task to **Run with highest privileges** instead.
+4. **Non-interactive session**: a service, a standard user's task that runs whether the user is logged on or not (S4U), and session 0 cannot show the prompt. The launcher fails at once with 125 rather than waiting for a consent that cannot come. Set such a task to **Run with highest privileges** instead. An administrator's S4U task needs neither: Windows does not filter its token, so it already runs elevated and `--elevate` does nothing there.
 
 Caveats:
 

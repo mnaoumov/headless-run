@@ -636,7 +636,7 @@ internal static class Program
             Test("help and version", () =>
             {
                 Assert(Run(launcher, "--help").Output.Contains("Usage:"), "help");
-                Assert(Run(launcher, "--version   ").Output == "headless-run 1.0.0\n", "version");
+                Assert(Run(launcher, "--version   ").Output == "headless-run 2.0.0\n", "version");
             });
             Test("echo shows the arguments and the child command line, and starts nothing", () =>
             {
