@@ -4,10 +4,9 @@ name: Build GitHub Pages
 # "GitHub Actions" as the source (repo Settings -> Pages -> Build and deployment -> Source: GitHub Actions).
 
 on:
-  # A release event runs from its tag, which the github-pages environment does not allow to deploy.
-  # Dispatch a second invocation on `main` so the deployment uses the protected branch instead.
-  release:
-    types: [published]
+  # release.yml dispatches this workflow on `main` once it has published a release. A `release` trigger would never
+  # fire: GitHub starts no workflow from an event made with GITHUB_TOKEN, except workflow_dispatch. It also runs on
+  # `main`, the branch the github-pages environment allows to deploy, rather than on the release tag.
   workflow_dispatch:
 
 concurrency:
@@ -15,19 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  dispatch-from-main:
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Dispatch deployment from main
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run build-pages.yml --repo "$GITHUB_REPOSITORY" --ref main
-
   build-and-deploy:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
