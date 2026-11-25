@@ -34,6 +34,8 @@ internal sealed unsafe class Tray : IDisposable
     private const int ShutdownSlackMilliseconds = 10000;
     private const int EditControlId = 1;
     private const int MenuTextCharacters = 100;
+    private const int IconAddAttempts = 5;
+    private const int IconAddRetryMilliseconds = 200;
     private static Tray? current;
     private static nint windowClassName;
     private static nint viewerClassName;
@@ -486,7 +488,19 @@ internal sealed unsafe class Tray : IDisposable
     private void AddIcon()
     {
         var data = IconData(TrayNative.NifMessage | TrayNative.NifIcon | TrayNative.NifTip, TrayNative.IdiApplication, "headless-run: " + job.CommandLine);
-        iconAdded = TrayNative.NotifyIcon(TrayNative.NimAdd, ref data);
+        // Shell_NotifyIcon times out while Explorer is busy, and an add that timed out may still have gone through, so
+        // a failed add is retried, and a modify that succeeds says the icon is there.
+        for (var attempt = 1; attempt <= IconAddAttempts; attempt++)
+        {
+            iconAdded = TrayNative.NotifyIcon(TrayNative.NimAdd, ref data) || TrayNative.NotifyIcon(TrayNative.NimModify, ref data);
+            if (iconAdded || attempt == IconAddAttempts)
+            {
+                break;
+            }
+
+            Thread.Sleep(IconAddRetryMilliseconds);
+        }
+
         if (!iconAdded && !iconReported && !job.Quiet)
         {
             // No notification area (no Explorer, or a non-interactive session): the job runs on without the icon.
