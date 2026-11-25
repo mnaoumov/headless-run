@@ -1,6 +1,6 @@
 {
   "name": "headless-run",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "The documentation site of headless-run. The launcher itself is built with .NET; see AGENTS.md.",
   "type": "module",

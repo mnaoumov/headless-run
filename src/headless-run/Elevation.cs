@@ -52,7 +52,7 @@ internal static class Elevation
         {
             throw new InvalidOperationException(
                 "--elevate needs a UAC prompt, which this non-interactive session cannot show (a service, " +
-                "an S4U scheduled task or session 0). Run the task with highest privileges instead.");
+                "a standard user's S4U scheduled task or session 0). Run the task with highest privileges instead.");
         }
 
         return true;

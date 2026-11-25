@@ -31,7 +31,7 @@ internal static class Program
             OutputNames.Expand(options);
             if (options.Help || options.Version)
             {
-                var text = options.Help ? Help : "headless-run 1.0.0\n";
+                var text = options.Help ? Help : "headless-run 2.0.0\n";
                 if (options.Output is not null)
                 {
                     CreateParentDirectory(options.Output);
@@ -473,7 +473,7 @@ internal static class Program
     }
 
     private const string Help = """
-        headless-run 1.0.0 - run a console program without a console window
+        headless-run 2.0.0 - run a console program without a console window
         Usage: headless-run.exe [options] -- <program> [arguments...]
                headless-run.exe config ...   (see headless-run config --help)
         --stdout FILE         Redirect stdout (overwrite by default)

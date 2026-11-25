@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 2.0.0 - 2026-11-25
 
 ### Breaking changes
 
@@ -16,7 +16,8 @@ All notable changes to this project are documented in this file.
 - Config files register new engines or change built-in ones: `%ProgramData%\headless-run\config.json` for every account, `%APPDATA%\headless-run\config.json` for yours, and `--config FILE` for one run. A JSON schema validates them in an editor.
 - `headless-run config` reads and writes those files after `git config`: `--list [--show-origin]`, `--edit`, get, set, `--add`, `--unset`, with `--global`, `--system` and `--file` scopes.
 - `.exe` and `.com` programs are documented and tested. A file that is no Windows program and that no engine runs fails with a diagnostic naming the setting that would run it.
-
+- `--elevate` runs the child as an administrator. From an unelevated caller, Windows shows its UAC prompt and an elevated copy of the launcher runs the child, relaying standard input, output and error, the environment, the working directory and the exit code back, so the call behaves as it would without the option; killing the caller still ends the whole tree. Already elevated, the option does nothing, so a script can pass it unconditionally. A declined prompt, or a session that cannot show one (a service, a standard user's S4U task, session 0), fails with 125 and runs nothing.
+- The documentation's PowerShell section notes that assigning the launcher's output to a variable neither waits nor captures it, and that `| Write-Output` does both.
 - `--tray` shows a notification-area icon while the job runs. Its menu shows the command line, start time and process id, shows or hides a window with the job's output, opens the `--stdout` and `--stderr` files, and stops the job, which then returns 130. When the job ends, a notification shows the exit code. It works with `--timeout` and `--elevate`; `--detach` refuses it. The default is `--tray=auto`: the icon is shown for a run started on a desktop, and not under Task Scheduler, a service, session 0 or `--detach`, so scheduled tasks stay invisible with no flag; `--tray=true` and `--tray=false` force it either way. Only an explicit `--tray` keeps the icon for 5 seconds after the job with its exit code.
 - `--event-log` writes one event per run to the Windows Application log, under the source `headless-run`: the outcome (exit code, timeout, tray stop, launcher failure with its diagnostic, or detached start) with its own event id, the command line, working directory and duration. A failed scheduled run is then visible in Event Viewer with no log file. Writing it never fails the job.
 - `--echo` starts nothing and shows what the launcher received: its command line split into arguments, the child tail, the engine and interpreter, and the exact child command line with the arguments a program would receive. The text goes to `--stdout FILE`, a redirected stdout or the calling console, and to a window when there is no console, as from a shortcut or the Run dialog, so any caller's quoting can be checked where it runs. In that window the received command line can be edited, and its arguments are split again as you type, so a variant of the line can be tried where it actually runs.

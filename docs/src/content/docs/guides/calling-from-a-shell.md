@@ -58,10 +58,11 @@ headless-run -- C:\Scripts\job.ps1 -Name 'nightly run' -DryRun | Out-Host
 ```
 
 1. PowerShell does not wait for a Windows-subsystem program unless its output is piped, so `| Out-Host` makes it wait and set `$LASTEXITCODE`.
-2. Single quotes keep `$`, `` ` `` and `"` literal. PowerShell 7.3 and later quote each argument for the program by Windows' rules (`$PSNativeCommandArgumentPassing` is `Windows`, which treats `headless-run.exe` as `Standard`), so an embedded `"` and a trailing `\` need no escaping.
-3. `--` and arguments that start with `-` or `/` reach a native program unchanged.
-4. After the stop-parsing token `--%`, the rest of the line goes to the program as typed: single quotes are no longer quotes, and `%NAME%` expands instead of `$name`.
-5. With `$PSNativeCommandArgumentPassing = 'Legacy'`, PowerShell 7 behaves like Windows PowerShell 5.1 below.
+2. Assigning the output is not piping it: `$out = headless-run -- ...` returns at once, leaves `$out` empty and `$LASTEXITCODE` unchanged, and the child's writes to the closed output fail. Pipe it on, as in `$out = headless-run -- ... | Write-Output`, to wait, capture the output and set `$LASTEXITCODE`.
+3. Single quotes keep `$`, `` ` `` and `"` literal. PowerShell 7.3 and later quote each argument for the program by Windows' rules (`$PSNativeCommandArgumentPassing` is `Windows`, which treats `headless-run.exe` as `Standard`), so an embedded `"` and a trailing `\` need no escaping.
+4. `--` and arguments that start with `-` or `/` reach a native program unchanged.
+5. After the stop-parsing token `--%`, the rest of the line goes to the program as typed: single quotes are no longer quotes, and `%NAME%` expands instead of `$name`.
+6. With `$PSNativeCommandArgumentPassing = 'Legacy'`, PowerShell 7 behaves like Windows PowerShell 5.1 below.
 
 ## Windows PowerShell 5.1
 
@@ -179,7 +180,7 @@ process.WaitForExit();
 ## Pitfalls
 
 1. **The launcher's `--`**: everything after the first `--` belongs to the child, including another `--`. No shell above removes either one.
-2. **Waiting**: a `cmd` prompt and PowerShell return before a Windows-subsystem program ends; use `start "" /wait` or pipe the output, as above.
+2. **Waiting**: a `cmd` prompt and PowerShell return before a Windows-subsystem program ends; use `start "" /wait` or pipe the output, as above. In PowerShell, assigning the output to a variable is not enough; pipe it on with `| Write-Output`.
 3. **`%`**: doubled in a batch file, expanded at a prompt when the variable is set, and expanded by Task Scheduler and a shortcut.
 4. **Embedded quotes**: `\"` on every Windows command line, and in Windows PowerShell 5.1 even inside a single-quoted string; PowerShell 7, Git Bash, WSL and the code callers quote for you.
 5. **A trailing backslash before a closing quote**: doubled wherever you write the command line yourself (`cmd`, Windows PowerShell 5.1, Task Scheduler, a shortcut).
